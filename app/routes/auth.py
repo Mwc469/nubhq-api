@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from ..database import get_db
 from ..models.user import User
-from ..schemas.auth import UserCreate, UserLogin, UserResponse, Token
+from ..schemas.auth import UserCreate, UserLogin, UserResponse
 from ..auth import (
     verify_password,
     get_password_hash,

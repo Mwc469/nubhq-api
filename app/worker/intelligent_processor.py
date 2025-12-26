@@ -13,7 +13,6 @@ Self-learning video pipeline that:
 """
 
 import os
-import sys
 import json
 import time
 import hashlib
@@ -24,7 +23,7 @@ import requests
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, List, Any, Tuple
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, field
 from enum import Enum
 import threading
 from queue import Queue, Empty
@@ -307,7 +306,7 @@ class VideoAnalyzer:
                     if pixels:
                         avg = sum(pixels) / len(pixels)
                         brightnesses.append(avg)
-            except:
+            except Exception:
                 pass
         
         avg_brightness = sum(brightnesses) / len(brightnesses) if brightnesses else 128
@@ -341,12 +340,12 @@ class VideoAnalyzer:
                 if 'max_volume:' in line:
                     try:
                         peak_db = float(line.split('max_volume:')[1].split('dB')[0].strip())
-                    except:
+                    except Exception:
                         pass
                 if 'mean_volume:' in line:
                     try:
                         avg_db = float(line.split('mean_volume:')[1].split('dB')[0].strip())
-                    except:
+                    except Exception:
                         pass
             
             return {
@@ -385,7 +384,7 @@ class VideoAnalyzer:
                 'scene_changes': scene_changes,
                 'intensity': intensity,
             }
-        except:
+        except Exception:
             return {'scene_changes': 0, 'intensity': 0.5}
 
 
@@ -680,7 +679,7 @@ class PreferenceLearner:
                         'approval_rate': (row[1] or 0) / row[0],
                         'avg_engagement_score': row[2] or 0,
                     }
-        except:
+        except Exception:
             pass
 
         return {
@@ -991,8 +990,8 @@ class PromptSystem:
             rec_marker = " ← recommended" if key == recommendation else ""
             print(f"  [{i}] {desc}{rec_marker}")
         
-        print(f"\n  [A] Always use my choice for similar videos")
-        print(f"  [S] Skip this video")
+        print("\n  [A] Always use my choice for similar videos")
+        print("  [S] Skip this video")
         print()
         
         while True:
@@ -1106,7 +1105,7 @@ class VideoProcessor:
             # Run engagement scoring
             engagement = None
             if self.engagement_scorer and output_paths:
-                print(f"\n📊 Scoring engagement...")
+                print("\n📊 Scoring engagement...")
                 output_path = Path(output_paths[0])
                 engagement = self.engagement_scorer.score(output_path, analysis)
                 print(f"   Score: {engagement.overall_score:.2f} (confidence: {engagement.confidence:.2f})")
@@ -1130,12 +1129,11 @@ class VideoProcessor:
 
                     # Push to approval queue
                     if self.queue_integration and self.enable_queue:
-                        print(f"\n🚀 Auto-queuing for approval...")
+                        print("\n🚀 Auto-queuing for approval...")
                         success, result = self.queue_integration.push_to_queue(
                             final_dest, analysis, engagement, decisions
                         )
                         if success:
-                            queued = True
                             print(f"   ✅ Queued! Approval ID: {result}")
                         else:
                             print(f"   ⚠️ Queue failed: {result}")
@@ -1145,7 +1143,6 @@ class VideoProcessor:
                     if final_dest.exists():
                         final_dest = Config.REVIEW_DIR / f"{output_path.stem}_{int(time.time())}{output_path.suffix}"
                     output_path.rename(final_dest)
-                    final_output_path = final_dest
                     output_paths = [str(final_dest)]
 
                     confidence_pct = engagement.confidence * 100 if engagement else 0
@@ -1286,11 +1283,11 @@ class VideoProcessor:
         cmd.extend(['-c:a', 'aac', '-b:a', '192k'])
         cmd.append(str(output_path))
         
-        print(f"\n🎬 Processing with settings:")
+        print("\n🎬 Processing with settings:")
         for k, v in decisions.items():
             print(f"   • {k}: {v}")
         
-        print(f"\n⏳ Running FFmpeg...")
+        print("\n⏳ Running FFmpeg...")
         
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)

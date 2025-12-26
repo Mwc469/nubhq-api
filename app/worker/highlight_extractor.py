@@ -10,11 +10,10 @@ Finds and extracts the best clips from long videos:
 Uses engagement_scorer for moment detection, then extracts actual clips.
 """
 
-import os
 import subprocess
 import logging
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from dataclasses import dataclass
 
 from .engagement_scorer import EngagementScorer, Moment

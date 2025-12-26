@@ -10,7 +10,6 @@ Schedule video processing for specific times:
 Uses macOS launchd or cron for scheduling.
 """
 
-import os
 import json
 import logging
 import subprocess
@@ -451,5 +450,5 @@ class LaunchdScheduler:
                 for line in result.stdout.split('\n')
                 if self.PLIST_PREFIX in line
             ]
-        except:
+        except Exception:
             return []

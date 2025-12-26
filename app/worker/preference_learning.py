@@ -13,9 +13,9 @@ import sqlite3
 import json
 import logging
 from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass, asdict
+from datetime import datetime
+from typing import Dict, Optional, Tuple
+from dataclasses import dataclass
 
 
 @dataclass

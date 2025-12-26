@@ -9,7 +9,6 @@ import sys
 import sqlite3
 from pathlib import Path
 import psutil
-import asyncio
 from typing import Dict, Any
 
 router = APIRouter(prefix="/api/health", tags=["health"])

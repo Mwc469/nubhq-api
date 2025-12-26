@@ -18,9 +18,8 @@ import subprocess
 import tempfile
 import base64
 from pathlib import Path
-from datetime import datetime
 from typing import Optional, Dict, List, Tuple, Any
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from enum import Enum
 
 # Optional AI imports
@@ -226,7 +225,7 @@ class EngagementScorer:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             data = json.loads(result.stdout)
             return float(data.get('format', {}).get('duration', 0))
-        except:
+        except Exception:
             return 0.0
 
     def _score_technical(self, path: str, analysis: Any, duration: float) -> Tuple[float, List[str]]:
@@ -296,7 +295,7 @@ class EngagementScorer:
             scene_changes = result.stderr.count('pts_time:')
             changes_per_min = (scene_changes / duration) * 60 if duration > 0 else 0
             return min(1.0, changes_per_min / 30)
-        except:
+        except Exception:
             return 0.5
 
     def _analyze_audio_energy(self, path: str) -> float:
@@ -311,7 +310,7 @@ class EngagementScorer:
                 if 'mean_volume:' in line:
                     return float(line.split('mean_volume:')[1].split('dB')[0].strip())
             return -30.0
-        except:
+        except Exception:
             return -30.0
 
     def _count_scene_changes(self, path: str) -> int:
@@ -324,7 +323,7 @@ class EngagementScorer:
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             return result.stderr.count('pts_time:')
-        except:
+        except Exception:
             return 0
 
     def _score_performance(self, path: str, duration: float) -> Tuple[float, List[str]]:
@@ -453,7 +452,7 @@ class EngagementScorer:
                     return True, min(1.0, skin_ratio * 4)
 
                 return False, skin_ratio * 2
-        except:
+        except Exception:
             pass
 
         return False, 0.0
@@ -483,7 +482,7 @@ class EngagementScorer:
                 return min(1.0, center_ratio * 1.5)
 
             return 0.5
-        except:
+        except Exception:
             return 0.5
 
     def _score_with_ai(self, path: str, duration: float) -> Tuple[Optional[float], List[str]]:
@@ -599,7 +598,7 @@ Respond in JSON format:
                             frames.append(base64.b64encode(f.read()).decode())
 
                     os.unlink(tmp.name)
-            except:
+            except Exception:
                 pass
 
         return frames
@@ -708,7 +707,7 @@ Respond in JSON format:
                                 'score': min(1.0, (max_vol + 20) / 15),
                                 'reason': 'audio peak'
                             })
-            except:
+            except Exception:
                 pass
 
         return peaks
@@ -739,7 +738,7 @@ Respond in JSON format:
                             'score': 0.7,
                             'reason': 'motion spike'
                         })
-        except:
+        except Exception:
             pass
 
         return spikes
@@ -808,19 +807,19 @@ def main():
     scorer = EngagementScorer()
     result = scorer.score(video_path)
 
-    print(f"\n📊 Results:")
+    print("\n📊 Results:")
     print(f"   Technical Score:   {result.technical_score:.2f}")
     print(f"   Performance Score: {result.performance_score:.2f}")
     if result.ai_score is not None:
         print(f"   AI Score:          {result.ai_score:.2f}")
-    print(f"   ─────────────────────")
+    print("   ─────────────────────")
     print(f"   Overall Score:     {result.overall_score:.2f}")
     print(f"   Confidence:        {result.confidence:.2f}")
 
     print(f"\n🏷️  Tags: {', '.join(result.tags)}")
 
     if result.best_moments:
-        print(f"\n⭐ Best Moments:")
+        print("\n⭐ Best Moments:")
         for i, m in enumerate(result.best_moments[:5], 1):
             print(f"   {i}. {m.start_time:.1f}s - {m.end_time:.1f}s (score: {m.score:.2f}) - {m.reason}")
 

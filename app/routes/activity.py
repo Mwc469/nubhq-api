@@ -75,6 +75,7 @@ def get_activity_stats(
     today_count = base_query.filter(Activity.created_at >= day_ago).count()
 
     stats = {
+        "total": total,
         "total_today": today_count,
         "approvals_pending": 0,
         "ai_actions": 0,

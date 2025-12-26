@@ -24,7 +24,7 @@ def get_messages(
     """Get all fan messages for the current user."""
     query = db.query(FanMessage).filter(FanMessage.user_id == current_user.id)
     if unread_only:
-        query = query.filter(FanMessage.is_read == False)
+        query = query.filter(FanMessage.is_read.is_(False))
     return query.order_by(FanMessage.created_at.desc()).all()
 
 
@@ -36,7 +36,7 @@ def get_unread_count(
     """Get count of unread messages for the current user."""
     count = db.query(FanMessage).filter(
         FanMessage.user_id == current_user.id,
-        FanMessage.is_read == False
+        FanMessage.is_read.is_(False)
     ).count()
     return {"count": count}
 

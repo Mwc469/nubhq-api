@@ -5,16 +5,20 @@ Endpoints for video processing, combining, and feedback.
 """
 
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 from sqlalchemy.orm import Session
+from datetime import datetime, timezone
+import asyncio
 import logging
 import json
 import os
 import re
+import subprocess
 
-from ..auth import get_current_user, get_required_user
+from ..auth import get_required_user
 from ..database import get_db
 from ..models.user import User
 from ..models.job import Job
@@ -29,12 +33,9 @@ logger = get_logger("video_pipeline")
 try:
     from ..worker.engagement_scorer import EngagementScorer
     from ..worker.content_combiner import (
-        HighlightExtractor,
-        MultiAngleSync,
         TemplateCompiler,
         create_highlight_reel,
         sync_videos,
-        compile_for_platform,
     )
     from ..worker.intelligent_processor import (
         PreferenceLearner,
@@ -166,12 +167,18 @@ class PipelineStatsResponse(BaseModel):
 # Allowed video extensions
 ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'}
 
+# Storage paths (Big Hoss = storage, Lil Hoss = working)
+STORAGE_DIR = os.environ.get('NUBHQ_STORAGE', '/Volumes/Big Hoss/NubHQ')
+WORK_DIR = os.environ.get('NUBHQ_WORK', '/Volumes/Lil Hoss/NubHQ')
+
 # Allowed directories for video processing
 ALLOWED_PATHS = [
-    '/Volumes/NUB_Workspace',
+    '/Volumes/Big Hoss',
+    '/Volumes/Lil Hoss',
+    '/Volumes/NUB_Workspace',  # Legacy support
     '/tmp',
-    os.environ.get('NUBHQ_INPUT', '/Volumes/NUB_Workspace/input'),
-    os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output'),
+    os.environ.get('NUBHQ_INPUT', f'{STORAGE_DIR}/01_Inbox_ToSort'),
+    os.environ.get('NUBHQ_OUTPUT', f'{STORAGE_DIR}/03_Exports'),
 ]
 
 
@@ -538,7 +545,7 @@ _custom_templates: Dict[str, dict] = {}
 def _load_custom_templates():
     """Load custom templates from disk"""
     global _custom_templates
-    templates_dir = Path(os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output')) / 'templates'
+    templates_dir = Path(os.environ.get('NUBHQ_OUTPUT', f'{STORAGE_DIR}/03_Exports')) / 'templates'
     templates_file = templates_dir / 'custom_templates.json'
 
     if templates_file.exists():
@@ -551,7 +558,7 @@ def _load_custom_templates():
 
 def _save_custom_templates():
     """Save custom templates to disk"""
-    templates_dir = Path(os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output')) / 'templates'
+    templates_dir = Path(os.environ.get('NUBHQ_OUTPUT', f'{STORAGE_DIR}/03_Exports')) / 'templates'
     try:
         templates_dir.mkdir(parents=True, exist_ok=True)
         templates_file = templates_dir / 'custom_templates.json'
@@ -663,10 +670,6 @@ async def get_custom_template(request: Request, template_id: str):
 # PHASE 3: ADVANCED FEATURES
 # ============================================================
 
-import subprocess
-import time
-from datetime import datetime, timezone
-
 # Activity log storage (in-memory, would use DB in production)
 _activity_log: List[dict] = []
 
@@ -746,7 +749,7 @@ async def generate_thumbnails(request: Request, thumb_request: ThumbnailRequest,
         timestamps = [interval * (i + 1) for i in range(thumb_request.count)]
 
         # Output directory
-        output_dir = Path(os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output')) / 'thumbnails'
+        output_dir = Path(os.environ.get('NUBHQ_OUTPUT', f'{STORAGE_DIR}/03_Exports')) / 'thumbnails'
         output_dir.mkdir(parents=True, exist_ok=True)
 
         thumbnails = []
@@ -838,7 +841,7 @@ async def batch_process(
                 if generate_thumbnails_flag:
                     try:
                         video_p = Path(video_path)
-                        output_dir = Path(os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output')) / 'thumbnails'
+                        output_dir = Path(os.environ.get('NUBHQ_OUTPUT', f'{STORAGE_DIR}/03_Exports')) / 'thumbnails'
                         output_dir.mkdir(parents=True, exist_ok=True)
 
                         # Generate single thumbnail at middle of video
@@ -968,7 +971,7 @@ async def _add_watermark_internal(video_path_str: str, watermark_path_str: str, 
     video_path = Path(video_path_str)
     watermark_path = Path(watermark_path_str)
 
-    output_dir = Path(os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output')) / 'watermarked'
+    output_dir = Path(os.environ.get('NUBHQ_OUTPUT', f'{STORAGE_DIR}/03_Exports')) / 'watermarked'
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{video_path.stem}_watermarked{video_path.suffix}"
 
@@ -1013,7 +1016,7 @@ async def add_watermark(request: Request, watermark_request: WatermarkRequest, c
         raise HTTPException(status_code=404, detail=f"Watermark not found: {watermark_request.watermark_path}")
 
     try:
-        output_dir = Path(os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output')) / 'watermarked'
+        output_dir = Path(os.environ.get('NUBHQ_OUTPUT', f'{STORAGE_DIR}/03_Exports')) / 'watermarked'
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"{video_path.stem}_watermarked{video_path.suffix}"
 
@@ -1153,7 +1156,7 @@ async def generate_captions(request: Request, caption_request: CaptionRequest, c
                 })
 
         # Generate output file
-        output_dir = Path(os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output')) / 'captions'
+        output_dir = Path(os.environ.get('NUBHQ_OUTPUT', f'{STORAGE_DIR}/03_Exports')) / 'captions'
         output_dir.mkdir(parents=True, exist_ok=True)
 
         if caption_request.format == "srt":
@@ -1485,9 +1488,6 @@ def _format_timestamp_vtt(seconds: float) -> str:
 # ============================================================
 # REAL-TIME PROGRESS (Server-Sent Events)
 # ============================================================
-
-from fastapi.responses import StreamingResponse
-import asyncio
 
 # Job progress cache (for real-time SSE streaming)
 _job_progress: Dict[str, dict] = {}
@@ -1925,3 +1925,61 @@ async def retry_job(request: Request, job_id: str, db: Session = Depends(get_db)
         "retry_count": job.retry_count,
         "max_retries": job.max_retries
     }
+
+
+# ============================================================
+# FOLDER WATCHER CONTROL
+# ============================================================
+
+@router.get("/watcher/status")
+async def get_watcher_status(current_user: User = Depends(get_required_user)):
+    """Get folder watcher status"""
+    try:
+        from ..worker.smart_processor import get_folder_watcher
+        watcher = get_folder_watcher()
+        return watcher.get_status()
+    except Exception as e:
+        return {
+            "running": False,
+            "error": str(e),
+            "input_dir": None,
+            "output_dir": None,
+        }
+
+
+@router.post("/watcher/start")
+async def start_watcher(current_user: User = Depends(get_required_user)):
+    """Start the folder watcher"""
+    try:
+        from ..worker.smart_processor import get_folder_watcher
+        watcher = get_folder_watcher()
+
+        if watcher.running:
+            return {"status": "already_running", "message": "Folder watcher is already running"}
+
+        started = watcher.start_background()
+        if started:
+            return {"status": "started", "message": "Folder watcher started successfully"}
+        else:
+            return {"status": "error", "message": "Failed to start folder watcher"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start watcher: {str(e)}")
+
+
+@router.post("/watcher/stop")
+async def stop_watcher(current_user: User = Depends(get_required_user)):
+    """Stop the folder watcher"""
+    try:
+        from ..worker.smart_processor import get_folder_watcher
+        watcher = get_folder_watcher()
+
+        if not watcher.running:
+            return {"status": "not_running", "message": "Folder watcher is not running"}
+
+        stopped = watcher.stop()
+        if stopped:
+            return {"status": "stopped", "message": "Folder watcher stopped successfully"}
+        else:
+            return {"status": "error", "message": "Failed to stop folder watcher"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to stop watcher: {str(e)}")

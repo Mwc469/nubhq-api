@@ -12,13 +12,12 @@ Also supports:
 - Batch grouping (project_name/)
 """
 
-import os
 import logging
 from pathlib import Path
-from typing import Optional, Tuple, Dict
+from typing import Optional, Dict
 from dataclasses import dataclass
 
-from .quick_profiles import ProcessingProfile, PROFILES, get_profile
+from .quick_profiles import ProcessingProfile, get_profile
 from .content_analyzer import ContentAnalyzer
 
 

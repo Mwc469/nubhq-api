@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 from pathlib import Path
 import logging
+import os
 
 from ..auth import get_current_user
 
@@ -29,12 +30,16 @@ from ..worker.quality_gate import QualityGate
 
 router = APIRouter(prefix="/api/video-tools", tags=["video-tools"])
 
-# Initialize components (paths from config)
-STORAGE_DIR = Path("/Volumes/Big Hoss/NubHQ")
+# Initialize components (paths from environment with Big Hoss defaults)
+STORAGE_DIR = Path(os.environ.get("NUBHQ_STORAGE", "/Volumes/Big Hoss/NubHQ"))
 OUTPUT_DIR = STORAGE_DIR / "03_Exports"
 THUMBNAILS_DIR = OUTPUT_DIR / "thumbnails"
 HIGHLIGHTS_DIR = OUTPUT_DIR / "highlights"
 DATABASE_DIR = STORAGE_DIR / "database"
+
+# Create directories if they don't exist (graceful handling)
+for _dir in [THUMBNAILS_DIR, HIGHLIGHTS_DIR, DATABASE_DIR]:
+    _dir.mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================

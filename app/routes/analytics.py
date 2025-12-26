@@ -1,7 +1,5 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from typing import Optional
-from datetime import datetime, timedelta
 
 from ..database import get_db
 

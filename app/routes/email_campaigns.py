@@ -72,6 +72,9 @@ def get_email_stats(
 
     return {
         "total_campaigns": total,
+        "sent": sent,
+        "scheduled": scheduled,
+        "drafts": drafts,
         "total_sent": total_recipients,
         "total_subscribers": 0,
         "avg_open_rate": 0,

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nubhq.intelligent-processor</string>
+    
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/python3</string>
+        <string>/Users/adam/nubhq_local/backend/worker/intelligent_processor.py</string>
+    </array>
+    
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NUBHQ_INPUT</key>
+        <string>/Volumes/NUB_Workspace/input</string>
+        <key>NUBHQ_OUTPUT</key>
+        <string>/Volumes/NUB_Workspace/output</string>
+        <key>NUBHQ_ARCHIVE</key>
+        <string>/Volumes/NUB_Workspace/archive</string>
+        <key>NUBHQ_PROCESSING</key>
+        <string>/Volumes/NUB_Workspace/processing</string>
+        <key>NUBHQ_DATA</key>
+        <string>/Volumes/NUB_Workspace/.nubhq</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+    
+    <key>RunAtLoad</key>
+    <true/>
+    
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    
+    <key>StandardOutPath</key>
+    <string>/Volumes/NUB_Workspace/.nubhq/processor.log</string>
+    
+    <key>StandardErrorPath</key>
+    <string>/Volumes/NUB_Workspace/.nubhq/processor.error.log</string>
+    
+    <key>WorkingDirectory</key>
+    <string>/Users/adam/nubhq_local/backend/worker</string>
+    
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>

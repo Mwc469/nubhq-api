@@ -7,7 +7,7 @@ import sys
 import json
 import traceback
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Optional
 from functools import wraps
 import time
 import os
@@ -125,7 +125,7 @@ class TextFormatter(logging.Formatter):
 
 def log_request(logger: StructuredLogger):
     """FastAPI middleware for request logging"""
-    from fastapi import Request, Response
+    from fastapi import Request
     from starlette.middleware.base import BaseHTTPMiddleware
     
     class RequestLoggingMiddleware(BaseHTTPMiddleware):

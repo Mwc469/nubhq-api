@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 import base64
 from pathlib import Path
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional
 from dataclasses import dataclass
 from enum import Enum
 
@@ -278,7 +278,7 @@ Respond in JSON format:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             data = json.loads(result.stdout)
             return float(data.get('format', {}).get('duration', 0))
-        except:
+        except Exception:
             return 0
 
     def _get_dimensions(self, video_path: Path) -> tuple:
@@ -290,7 +290,7 @@ Respond in JSON format:
             for stream in data.get('streams', []):
                 if stream['codec_type'] == 'video':
                     return int(stream['width']), int(stream['height'])
-        except:
+        except Exception:
             pass
         return 1920, 1080
 
@@ -301,7 +301,7 @@ Respond in JSON format:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             data = json.loads(result.stdout)
             return any(s['codec_type'] == 'audio' for s in data.get('streams', []))
-        except:
+        except Exception:
             return False
 
 

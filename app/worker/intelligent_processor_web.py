@@ -6,28 +6,21 @@ Web interface for video processing prompts.
 Shows pending decisions and learns from choices.
 """
 
-import os
-import json
-import sqlite3
-import asyncio
 from pathlib import Path
-from datetime import datetime
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, asdict
 import threading
 from queue import Queue, Empty
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
 # Import from main processor
 from intelligent_processor import (
-    Config, VideoAnalyzer, VideoAnalysis, PreferenceLearner, 
-    VideoProcessor, UserDecision, DecisionType, PromptSystem
+    Config, VideoAnalysis, PreferenceLearner, 
+    VideoProcessor, DecisionType, PromptSystem
 )
 
 # ============================================================
@@ -130,8 +123,8 @@ class PromptQueueManager:
         with self._lock:
             if response.decision_id not in self.pending:
                 return False
-            
-            pending = self.pending.pop(response.decision_id)
+
+            self.pending.pop(response.decision_id)
             queue = self.responses.get(response.decision_id)
             
             if queue:

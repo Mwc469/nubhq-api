@@ -8,7 +8,7 @@ from typing import AsyncGenerator, Dict, Set
 import asyncio
 import json
 from datetime import datetime
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 import uuid
 
 router = APIRouter(prefix="/api/events", tags=["events"])

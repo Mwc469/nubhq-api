@@ -10,12 +10,11 @@ Requires API credentials configured via environment variables.
 """
 
 import os
-import json
 import logging
 from pathlib import Path
 from typing import Optional, Dict, List
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 
 
@@ -83,8 +82,6 @@ class YouTubeUploader:
             )
 
         try:
-            from google.oauth2.credentials import Credentials
-            from google_auth_oauthlib.flow import InstalledAppFlow
             from googleapiclient.discovery import build
             from googleapiclient.http import MediaFileUpload
 
@@ -186,7 +183,7 @@ class YouTubeUploader:
                     str(self.credentials_path),
                     self.SCOPES
                 )
-            except:
+            except Exception:
                 pass
 
         # Refresh or get new credentials

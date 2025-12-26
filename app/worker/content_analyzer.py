@@ -9,11 +9,11 @@ import subprocess
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-from .quick_profiles import ProcessingProfile, PROFILES, get_profile
+from .quick_profiles import ProcessingProfile, get_profile
 
 
 class ContentType(Enum):
@@ -233,7 +233,7 @@ class ContentAnalyzer:
 
             # Count silence periods
             silence_starts = result.stderr.count('silence_start')
-            silence_ends = result.stderr.count('silence_end')
+            _silence_ends = result.stderr.count('silence_end')  # kept for future use
 
             # More silence periods typically = speech (pauses between sentences)
             # Continuous audio = music
@@ -294,7 +294,7 @@ class ContentAnalyzer:
                         skin_ratio = skin_pixels / (len(pixels) / 3)
                         if skin_ratio > 0.05:  # At least 5% skin tones
                             face_frames += 1
-            except:
+            except Exception:
                 pass
 
         has_face = face_frames > sample_count * 0.4

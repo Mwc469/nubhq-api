@@ -5,7 +5,7 @@ Endpoints for managing webhook subscriptions and event delivery.
 """
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
@@ -136,7 +136,7 @@ async def deliver_webhook(webhook: Webhook, event: str, data: dict, db: Session)
 async def trigger_webhooks(event: str, data: dict, db: Session, user_id: Optional[int] = None):
     """Trigger all active webhooks subscribed to an event"""
     query = db.query(Webhook).filter(
-        Webhook.active == True,
+        Webhook.active.is_(True),
         Webhook.events.contains([event])
     )
 

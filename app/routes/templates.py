@@ -61,7 +61,7 @@ def get_templates(
     if category:
         query = query.filter(Template.category == category)
     if favorites_only:
-        query = query.filter(Template.is_favorite == True)
+        query = query.filter(Template.is_favorite.is_(True))
 
     templates = query.order_by(Template.created_at.desc()).all()
     return [template_to_dict(t) for t in templates]

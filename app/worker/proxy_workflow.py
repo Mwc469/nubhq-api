@@ -9,7 +9,6 @@ Fast previews with full quality on approval:
 Saves processing time by not encoding rejected videos at full quality.
 """
 
-import os
 import subprocess
 import json
 import logging

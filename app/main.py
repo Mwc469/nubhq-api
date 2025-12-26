@@ -1,6 +1,10 @@
 """
 NubHQ API - FastAPI application entry point.
 """
+import os
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
@@ -35,12 +39,42 @@ settings = get_settings()
 # Create tables (in production, use Alembic migrations instead)
 Base.metadata.create_all(bind=engine)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifecycle - startup and shutdown"""
+    # Startup
+    auto_start_watcher = os.environ.get("NUBHQ_AUTO_WATCHER", "").lower() in ("1", "true", "yes")
+
+    if auto_start_watcher:
+        try:
+            from .worker.smart_processor import get_folder_watcher
+            watcher = get_folder_watcher()
+            watcher.start_background()
+            logging.info("Auto-started folder watcher on startup")
+        except Exception as e:
+            logging.warning(f"Failed to auto-start folder watcher: {e}")
+
+    yield  # App is running
+
+    # Shutdown
+    try:
+        from .worker.smart_processor import get_folder_watcher
+        watcher = get_folder_watcher()
+        if watcher.running:
+            watcher.stop()
+            logging.info("Stopped folder watcher on shutdown")
+    except Exception:
+        pass
+
+
 app = FastAPI(
     title="NubHQ API",
     description="Backend API for NubHQ dashboard",
     version="1.0.0",
     docs_url="/api/docs" if settings.debug else None,
     redoc_url="/api/redoc" if settings.debug else None,
+    lifespan=lifespan,
 )
 
 # Add rate limiter to app state

@@ -175,7 +175,7 @@ class SmartThumbnailGenerator:
             ]
 
             try:
-                result = subprocess.run(cmd, capture_output=True, timeout=10)
+                subprocess.run(cmd, capture_output=True, timeout=10)
 
                 if not os.path.exists(tmp.name) or os.path.getsize(tmp.name) == 0:
                     os.unlink(tmp.name)

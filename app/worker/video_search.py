@@ -12,15 +12,13 @@ Search videos by:
 Combines tag database with file metadata for comprehensive search.
 """
 
-import os
 import json
 import sqlite3
 import logging
 from pathlib import Path
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Set
+from datetime import datetime
+from typing import List, Dict, Optional
 from dataclasses import dataclass
-from enum import Enum
 
 
 @dataclass
@@ -365,7 +363,7 @@ class VideoSearch:
                     score += 0.1
                 elif days_old < 30:
                     score += 0.05
-            except:
+            except Exception:
                 pass
 
         return min(1.0, score)
@@ -393,11 +391,22 @@ class VideoSearch:
             stat = video_path.stat()
             created_at = datetime.fromtimestamp(stat.st_ctime).isoformat()
 
+            # Parse frame rate safely (format: "num/den" like "30/1" or "30000/1001")
+            fps_str = video_stream.get('r_frame_rate', '30/1')
+            try:
+                if '/' in fps_str:
+                    num, den = fps_str.split('/')
+                    fps = float(num) / float(den) if float(den) != 0 else 30.0
+                else:
+                    fps = float(fps_str)
+            except (ValueError, ZeroDivisionError):
+                fps = 30.0
+
             return {
                 'duration': float(format_info.get('duration', 0)),
                 'width': int(video_stream.get('width', 0)),
                 'height': int(video_stream.get('height', 0)),
-                'fps': eval(video_stream.get('r_frame_rate', '30/1')),
+                'fps': fps,
                 'codec': video_stream.get('codec_name', 'unknown'),
                 'created_at': created_at
             }

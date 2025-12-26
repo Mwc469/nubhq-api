@@ -67,6 +67,10 @@ def db():
 @pytest.fixture(scope="function")
 def client(db):
     """Create a test client."""
+    # Clear any module-level state that persists between tests
+    from app.routes.video_pipeline import _custom_templates
+    _custom_templates.clear()
+
     with TestClient(app) as c:
         yield c
 

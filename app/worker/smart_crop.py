@@ -14,7 +14,7 @@ import json
 import logging
 import tempfile
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Optional, Tuple
 from dataclasses import dataclass
 
 # Optional OpenCV
@@ -149,7 +149,7 @@ class SmartCropper:
             for stream in data.get('streams', []):
                 if stream['codec_type'] == 'video':
                     return int(stream['width']), int(stream['height'])
-        except:
+        except Exception:
             pass
         return 1920, 1080
 
@@ -160,7 +160,7 @@ class SmartCropper:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             data = json.loads(result.stdout)
             return float(data.get('format', {}).get('duration', 0))
-        except:
+        except Exception:
             return 0
 
     def _detect_faces_present(self, video_path: Path) -> bool:
@@ -422,7 +422,7 @@ def smart_crop_cli():
     result = cropper.crop(video_path, aspect_ratio)
 
     if result.success:
-        print(f"\nSuccess!")
+        print("\nSuccess!")
         print(f"  Output: {result.output_path}")
         print(f"  Method: {result.crop_method}")
     else:

@@ -15,12 +15,10 @@ import json
 import logging
 import subprocess
 import tempfile
-import hashlib
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, List, Tuple, Any
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass
 
 # Try to import audio analysis libraries
 try:
@@ -46,8 +44,11 @@ except ImportError:
 class CombinerConfig:
     """Content combiner configuration"""
 
+    # Storage paths (Big Hoss = storage, Lil Hoss = working)
+    STORAGE_DIR = Path(os.environ.get('NUBHQ_STORAGE', '/Volumes/Big Hoss/NubHQ'))
+
     # Output directories
-    OUTPUT_DIR = Path(os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output'))
+    OUTPUT_DIR = Path(os.environ.get('NUBHQ_OUTPUT', str(STORAGE_DIR / '03_Exports')))
     HIGHLIGHTS_DIR = OUTPUT_DIR / 'highlights'
     MULTICAM_DIR = OUTPUT_DIR / 'multicam'
     COMPILED_DIR = OUTPUT_DIR / 'compiled'
@@ -63,7 +64,7 @@ class CombinerConfig:
     SYNC_SEARCH_WINDOW = 30  # Seconds to search for sync point
 
     # Templates
-    TEMPLATES_DIR = Path(os.environ.get('NUBHQ_TEMPLATES', '/Volumes/NUB_Workspace/templates'))
+    TEMPLATES_DIR = Path(os.environ.get('NUBHQ_TEMPLATES', str(STORAGE_DIR / 'templates')))
 
     @classmethod
     def ensure_dirs(cls):
@@ -288,7 +289,7 @@ class HighlightExtractor:
                         score = min(1.0, (max_vol + 20) / 15)
                         if score > 0.5:  # Only keep significant peaks
                             peaks.append((start + segment_duration / 2, score))
-            except:
+            except Exception:
                 pass
 
         return peaks
@@ -313,7 +314,7 @@ class HighlightExtractor:
                     if match:
                         t = float(match.group(1))
                         peaks.append((t, 0.7))  # Fixed score for scene changes
-        except:
+        except Exception:
             pass
 
         return peaks

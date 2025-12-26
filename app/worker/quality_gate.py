@@ -15,7 +15,6 @@ Flags problems and prevents bad videos from reaching Library.
 import subprocess
 import json
 import logging
-import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 from dataclasses import dataclass
@@ -283,12 +282,12 @@ class QualityGate:
                 if 'max_volume:' in line:
                     try:
                         peak_db = float(line.split('max_volume:')[1].split('dB')[0].strip())
-                    except:
+                    except Exception:
                         pass
                 if 'mean_volume:' in line:
                     try:
                         mean_db = float(line.split('mean_volume:')[1].split('dB')[0].strip())
-                    except:
+                    except Exception:
                         pass
 
             # No audio stream
@@ -511,7 +510,7 @@ class QualityGate:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             data = json.loads(result.stdout)
             return float(data.get('format', {}).get('duration', 0))
-        except:
+        except Exception:
             return 0
 
     def _has_audio_stream(self, video_path: Path) -> bool:
@@ -524,7 +523,7 @@ class QualityGate:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             data = json.loads(result.stdout)
             return any(s['codec_type'] == 'audio' for s in data.get('streams', []))
-        except:
+        except Exception:
             return False
 
 

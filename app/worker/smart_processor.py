@@ -16,28 +16,27 @@ Enhanced processor that integrates all smart features:
 """
 
 import os
-import sys
 import json
 import time
 import hashlib
 import logging
 import subprocess
 import threading
+import sqlite3
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, List, Tuple, Set
 from dataclasses import dataclass, field
-from queue import Queue, PriorityQueue, Empty
+from queue import PriorityQueue, Empty
 import signal
 
 # Import all smart modules
 from .smart_folders import SmartFolderRouter, FolderRouting
-from .content_analyzer import ContentAnalyzer, ContentAnalysis
 from .quality_gate import QualityGate, QualityReport
 from .smart_thumbnails import SmartThumbnailGenerator
 from .highlight_extractor import HighlightExtractor
-from .preference_learning import EnhancedPreferenceLearner, ProcessingFeedback
-from .quick_profiles import ProcessingProfile, get_profile, profile_to_decisions
+from .preference_learning import EnhancedPreferenceLearner
+from .quick_profiles import profile_to_decisions
 from .engagement_scorer import EngagementScorer
 
 
@@ -113,6 +112,70 @@ class SmartConfig:
 
 
 # ============================================================
+# PROCESSED FILES DATABASE
+# ============================================================
+
+class ProcessedFilesDB:
+    """SQLite-backed storage for processed files (survives restarts)"""
+
+    def __init__(self, db_path: Path = None):
+        self.db_path = db_path or SmartConfig.DATABASE_DIR / "processed_files.db"
+        self._init_db()
+
+    def _init_db(self):
+        """Initialize database schema"""
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS processed_files (
+                    path TEXT PRIMARY KEY,
+                    processed_at TEXT NOT NULL,
+                    status TEXT DEFAULT 'completed',
+                    output_path TEXT,
+                    error TEXT
+                )
+            ''')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_processed_at ON processed_files(processed_at)')
+            conn.commit()
+
+    def is_processed(self, path: Path) -> bool:
+        """Check if a file has been processed"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute('SELECT 1 FROM processed_files WHERE path = ?', (str(path),))
+            return cursor.fetchone() is not None
+
+    def mark_processed(self, path: Path, status: str = "completed", output_path: Path = None, error: str = None):
+        """Mark a file as processed"""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                INSERT OR REPLACE INTO processed_files (path, processed_at, status, output_path, error)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (
+                str(path),
+                datetime.now().isoformat(),
+                status,
+                str(output_path) if output_path else None,
+                error
+            ))
+            conn.commit()
+
+    def get_all_processed(self) -> Set[str]:
+        """Get all processed file paths (for backwards compatibility)"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute('SELECT path FROM processed_files')
+            return {row[0] for row in cursor.fetchall()}
+
+    def clear_old(self, days: int = 30) -> int:
+        """Remove entries older than N days"""
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute('DELETE FROM processed_files WHERE processed_at < ?', (cutoff,))
+            conn.commit()
+            return cursor.rowcount
+
+
+# ============================================================
 # DATA MODELS
 # ============================================================
 
@@ -160,7 +223,7 @@ class GPUEncoder:
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             return 'h264_videotoolbox' in result.stdout
-        except:
+        except Exception:
             return False
 
     @staticmethod
@@ -320,7 +383,7 @@ class CaptionGenerator:
         try:
             result = subprocess.run(cmd, capture_output=True, timeout=3600)
             return result.returncode == 0
-        except:
+        except Exception:
             return False
 
 
@@ -432,7 +495,7 @@ class Deduplicator:
                 result = subprocess.run(cmd, capture_output=True, timeout=10)
                 if result.stdout:
                     frames_data.append(result.stdout[:256])
-            except:
+            except Exception:
                 pass
 
         # Combine into hash
@@ -483,7 +546,7 @@ class Deduplicator:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             data = json.loads(result.stdout)
             return float(data.get('format', {}).get('duration', 0))
-        except:
+        except Exception:
             return 0
 
 
@@ -752,7 +815,7 @@ class SmartVideoProcessor:
             for stream in data.get('streams', []):
                 if stream['codec_type'] == 'video':
                     return int(stream['width']), int(stream['height'])
-        except:
+        except Exception:
             pass
         return 1920, 1080
 
@@ -763,7 +826,7 @@ class SmartVideoProcessor:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             data = json.loads(result.stdout)
             return float(data.get('format', {}).get('duration', 0))
-        except:
+        except Exception:
             return 0
 
 
@@ -777,7 +840,8 @@ class SmartFolderWatcher:
     def __init__(self, processor: SmartVideoProcessor):
         self.processor = processor
         self.queue = PriorityQueue()
-        self.processed = set()
+        self.processed_db = ProcessedFilesDB()  # SQLite-backed persistence
+        self.processed = self.processed_db.get_all_processed()  # Load existing
         self.running = False
         self._lock = threading.Lock()
 
@@ -832,7 +896,8 @@ class SmartFolderWatcher:
             elif item.is_file():
                 if item.suffix.lower() in SmartConfig.SUPPORTED_FORMATS:
                     with self._lock:
-                        if str(item) not in self.processed:
+                        # Check both in-memory cache and database
+                        if str(item) not in self.processed and not self.processed_db.is_processed(item):
                             self.processed.add(str(item))
 
                             # Wait for file to finish writing
@@ -860,9 +925,21 @@ class SmartFolderWatcher:
                     print(f"\nCompleted: {result.input_path.name}")
                     print(f"  Output: {result.output_path.name if result.output_path else 'N/A'}")
                     print(f"  Time: {result.processing_time:.1f}s")
+                    # Persist to database
+                    self.processed_db.mark_processed(
+                        result.input_path,
+                        status="completed",
+                        output_path=result.output_path
+                    )
                 else:
                     print(f"\nFailed: {result.input_path.name}")
                     print(f"  Error: {result.error}")
+                    # Persist failure to database
+                    self.processed_db.mark_processed(
+                        result.input_path,
+                        status="failed",
+                        error=result.error
+                    )
 
             except Empty:
                 continue
@@ -870,6 +947,54 @@ class SmartFolderWatcher:
                 logging.exception(f"Process error: {e}")
 
         print("\nGoodbye!")
+
+    def start_background(self):
+        """Start watching in background threads (non-blocking for FastAPI)"""
+        if self.running:
+            return False  # Already running
+
+        self.running = True
+        self._watcher_thread = threading.Thread(target=self._watch_loop, daemon=True, name="folder-watcher")
+        self._processor_thread = threading.Thread(target=self._process_loop, daemon=True, name="video-processor")
+
+        self._watcher_thread.start()
+        self._processor_thread.start()
+
+        logging.info(f"Folder watcher started: watching {SmartConfig.INPUT_DIR}")
+        return True
+
+    def stop(self):
+        """Stop watching gracefully"""
+        if not self.running:
+            return False
+
+        self.running = False
+        logging.info("Folder watcher stopped")
+        return True
+
+    def get_status(self) -> dict:
+        """Get watcher status"""
+        return {
+            "running": self.running,
+            "input_dir": str(SmartConfig.INPUT_DIR),
+            "output_dir": str(SmartConfig.OUTPUT_DIR),
+            "queue_size": self.queue.qsize(),
+            "processed_count": len(self.processed),
+            "encoder": self.processor.encoder if self.processor else "unknown",
+        }
+
+
+# Global watcher instance (initialized lazily)
+_folder_watcher: Optional[SmartFolderWatcher] = None
+
+
+def get_folder_watcher() -> SmartFolderWatcher:
+    """Get or create the global folder watcher instance"""
+    global _folder_watcher
+    if _folder_watcher is None:
+        processor = SmartVideoProcessor()
+        _folder_watcher = SmartFolderWatcher(processor)
+    return _folder_watcher
 
 
 # ============================================================
