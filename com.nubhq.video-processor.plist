@@ -18,7 +18,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>NUBHQ_INPUT</key>
-        <string>/Volumes/Lil Hoss/NubHQ/01_Inbox_ToSort</string>
+        <string>/Volumes/Big Hoss/NubHQ/01_Inbox_ToSort</string>
         <key>NUBHQ_OUTPUT</key>
         <string>/Volumes/Big Hoss/NubHQ/03_Exports</string>
         <key>NUBHQ_LIBRARY</key>
