@@ -20,11 +20,15 @@
         <key>NUBHQ_INPUT</key>
         <string>/Volumes/Lil Hoss/NubHQ/01_Inbox_ToSort</string>
         <key>NUBHQ_OUTPUT</key>
-        <string>/Volumes/Lil Hoss/NubHQ/03_Exports</string>
+        <string>/Volumes/Big Hoss/NubHQ/03_Exports</string>
+        <key>NUBHQ_LIBRARY</key>
+        <string>/Volumes/Big Hoss/NubHQ/02_Library</string>
         <key>NUBHQ_ARCHIVE</key>
         <string>/Volumes/Big Hoss/NubHQ/04_Archive</string>
         <key>NUBHQ_DATA</key>
-        <string>/Volumes/Lil Hoss/NubHQ/database</string>
+        <string>/Volumes/Big Hoss/NubHQ/database</string>
+        <key>NUBHQ_TEMP</key>
+        <string>/Volumes/Lil Hoss/NubHQ/temp</string>
         <key>NUBHQ_QUICK_MODE</key>
         <string>youtube</string>
     </dict>
