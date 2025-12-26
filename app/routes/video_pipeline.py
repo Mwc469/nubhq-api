@@ -9,6 +9,8 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 import logging
+import json
+import os
 
 # Import worker modules
 try:
@@ -107,10 +109,27 @@ class EngagementResponse(BaseModel):
     performance_score: float
     ai_score: Optional[float]
     overall_score: float
-    confidence: float
-    tags: List[str]
-    best_moments: List[Dict[str, Any]]
-    analysis_time: float
+
+
+class TemplateSegment(BaseModel):
+    type: str  # "intro", "highlight", "outro", "cta", "hook"
+    duration: int
+    source: Optional[str] = None  # Path to custom asset
+
+
+class CustomTemplateCreate(BaseModel):
+    id: str
+    name: str
+    duration: int
+    aspect: str  # "16:9", "9:16", "1:1"
+    segments: List[TemplateSegment]
+
+
+class CustomTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    duration: Optional[int] = None
+    aspect: Optional[str] = None
+    segments: Optional[List[TemplateSegment]] = None
 
 
 class TemplateInfo(BaseModel):
@@ -416,3 +435,131 @@ async def reject_review_video(filename: str):
         return {"status": "ok", "message": f"Deleted: {filename}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# CUSTOM TEMPLATE CRUD
+# ============================================================
+
+# In-memory storage for custom templates (in production, use database)
+_custom_templates: Dict[str, dict] = {}
+
+
+def _load_custom_templates():
+    """Load custom templates from disk"""
+    global _custom_templates
+    templates_dir = Path(os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output')) / 'templates'
+    templates_file = templates_dir / 'custom_templates.json'
+
+    if templates_file.exists():
+        try:
+            with open(templates_file, 'r') as f:
+                _custom_templates = json.load(f)
+        except Exception as e:
+            logging.warning(f"Failed to load custom templates: {e}")
+
+
+def _save_custom_templates():
+    """Save custom templates to disk"""
+    templates_dir = Path(os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output')) / 'templates'
+    try:
+        templates_dir.mkdir(parents=True, exist_ok=True)
+        templates_file = templates_dir / 'custom_templates.json'
+        with open(templates_file, 'w') as f:
+            json.dump(_custom_templates, f, indent=2)
+    except Exception as e:
+        logging.warning(f"Failed to save custom templates: {e}")
+
+
+# Load templates on module import
+_load_custom_templates()
+
+
+@router.post("/templates", status_code=201)
+async def create_custom_template(template: CustomTemplateCreate):
+    """Create a new custom template"""
+    if template.id in _custom_templates:
+        raise HTTPException(status_code=400, detail=f"Template '{template.id}' already exists")
+
+    # Validate aspect ratio
+    if template.aspect not in ["16:9", "9:16", "1:1", "4:5"]:
+        raise HTTPException(status_code=400, detail=f"Invalid aspect ratio: {template.aspect}")
+
+    # Store template
+    _custom_templates[template.id] = {
+        "id": template.id,
+        "name": template.name,
+        "duration": template.duration,
+        "aspect": template.aspect,
+        "segments": [s.model_dump() for s in template.segments],
+        "is_custom": True
+    }
+
+    _save_custom_templates()
+
+    return {
+        "status": "ok",
+        "message": f"Template '{template.id}' created",
+        "template": _custom_templates[template.id]
+    }
+
+
+@router.put("/templates/{template_id}")
+async def update_custom_template(template_id: str, update: CustomTemplateUpdate):
+    """Update an existing custom template"""
+    if template_id not in _custom_templates:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+
+    template = _custom_templates[template_id]
+
+    # Update fields
+    if update.name is not None:
+        template["name"] = update.name
+    if update.duration is not None:
+        template["duration"] = update.duration
+    if update.aspect is not None:
+        if update.aspect not in ["16:9", "9:16", "1:1", "4:5"]:
+            raise HTTPException(status_code=400, detail=f"Invalid aspect ratio: {update.aspect}")
+        template["aspect"] = update.aspect
+    if update.segments is not None:
+        template["segments"] = [s.model_dump() for s in update.segments]
+
+    _save_custom_templates()
+
+    return {
+        "status": "ok",
+        "message": f"Template '{template_id}' updated",
+        "template": template
+    }
+
+
+@router.delete("/templates/{template_id}")
+async def delete_custom_template(template_id: str):
+    """Delete a custom template"""
+    if template_id not in _custom_templates:
+        raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+
+    del _custom_templates[template_id]
+    _save_custom_templates()
+
+    return {
+        "status": "ok",
+        "message": f"Template '{template_id}' deleted"
+    }
+
+
+@router.get("/templates/{template_id}")
+async def get_custom_template(template_id: str):
+    """Get a specific template by ID"""
+    # Check custom templates first
+    if template_id in _custom_templates:
+        return _custom_templates[template_id]
+
+    # Check built-in templates
+    if HAS_WORKERS:
+        compiler = TemplateCompiler()
+        for template in compiler.list_templates():
+            if template["id"] == template_id:
+                return template
+
+    raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")

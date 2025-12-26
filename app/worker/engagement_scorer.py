@@ -30,6 +30,15 @@ try:
 except ImportError:
     HAS_OPENAI = False
 
+# Optional OpenCV for face detection
+try:
+    import cv2
+    import numpy as np
+    HAS_OPENCV = True
+except ImportError:
+    HAS_OPENCV = False
+    logging.warning("opencv-python not available - using basic face detection")
+
 
 # ============================================================
 # DATA MODELS
@@ -356,11 +365,68 @@ class EngagementScorer:
         Detect if face is present at a specific time.
         Returns (face_present, confidence)
 
-        Note: This uses FFmpeg's metadata detection which is basic.
-        For better results, opencv-python with haarcascades could be used.
+        Uses OpenCV Haar cascade when available, falls back to skin tone heuristic.
         """
-        # Extract frame and check for face-like patterns
-        # This is a simplified heuristic - for production, use proper face detection
+        if HAS_OPENCV:
+            return self._detect_face_opencv(path, time_sec)
+        else:
+            return self._detect_face_heuristic(path, time_sec)
+
+    def _detect_face_opencv(self, path: str, time_sec: float) -> Tuple[bool, float]:
+        """Use OpenCV Haar cascade for proper face detection."""
+        try:
+            # Extract frame using FFmpeg to a temp file
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                cmd = [
+                    'ffmpeg', '-ss', str(time_sec), '-i', path,
+                    '-vframes', '1', '-q:v', '2', '-y', tmp.name
+                ]
+                subprocess.run(cmd, capture_output=True, timeout=10)
+
+                if os.path.exists(tmp.name) and os.path.getsize(tmp.name) > 0:
+                    # Load image and convert to grayscale
+                    img = cv2.imread(tmp.name)
+                    if img is None:
+                        os.unlink(tmp.name)
+                        return False, 0.0
+
+                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+                    # Load Haar cascade for face detection
+                    face_cascade = cv2.CascadeClassifier(
+                        cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+                    )
+
+                    # Detect faces
+                    faces = face_cascade.detectMultiScale(
+                        gray,
+                        scaleFactor=1.1,
+                        minNeighbors=4,
+                        minSize=(30, 30)
+                    )
+
+                    os.unlink(tmp.name)
+
+                    if len(faces) > 0:
+                        # Calculate confidence based on face size relative to frame
+                        img_area = img.shape[0] * img.shape[1]
+                        max_face_area = max(w * h for (x, y, w, h) in faces)
+                        face_ratio = max_face_area / img_area
+
+                        # Larger faces = higher confidence
+                        confidence = min(1.0, face_ratio * 10 + 0.3)
+                        return True, confidence
+
+                    return False, 0.0
+
+                os.unlink(tmp.name)
+        except Exception as e:
+            logging.debug(f"OpenCV face detection failed: {e}")
+
+        return False, 0.0
+
+    def _detect_face_heuristic(self, path: str, time_sec: float) -> Tuple[bool, float]:
+        """Fallback skin tone heuristic when OpenCV is not available."""
         cmd = [
             'ffmpeg', '-ss', str(time_sec), '-i', path,
             '-vframes', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'
@@ -369,16 +435,13 @@ class EngagementScorer:
         try:
             result = subprocess.run(cmd, capture_output=True, timeout=10)
             if result.stdout:
-                # Simple skin tone detection heuristic
                 pixels = result.stdout
-                # Count pixels with skin-like RGB values
                 skin_count = 0
-                total_checked = min(len(pixels) // 3, 10000)  # Sample up to 10k pixels
+                total_checked = min(len(pixels) // 3, 10000)
 
                 for i in range(0, total_checked * 3, 3):
                     if i + 2 < len(pixels):
                         r, g, b = pixels[i], pixels[i+1], pixels[i+2]
-                        # Simplified skin tone check
                         if r > 95 and g > 40 and b > 20:
                             if max(r, g, b) - min(r, g, b) > 15:
                                 if abs(r - g) > 15 and r > g and r > b:
@@ -386,7 +449,6 @@ class EngagementScorer:
 
                 skin_ratio = skin_count / total_checked if total_checked > 0 else 0
 
-                # High skin ratio suggests face presence
                 if skin_ratio > 0.15:
                     return True, min(1.0, skin_ratio * 4)
 
