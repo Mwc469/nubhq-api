@@ -12,6 +12,7 @@ from .analytics import router as analytics_router
 from .activity import router as activity_router
 from .email_campaigns import router as email_campaigns_router
 from .media import router as media_router
+from .video_pipeline import router as video_pipeline_router
 
 __all__ = [
     "approvals_router",
@@ -28,4 +29,5 @@ __all__ = [
     "activity_router",
     "email_campaigns_router",
     "media_router",
+    "video_pipeline_router",
 ]
