@@ -576,3 +576,563 @@ async def get_custom_template(template_id: str):
                 return template
 
     raise HTTPException(status_code=404, detail=f"Template '{template_id}' not found")
+
+
+# ============================================================
+# PHASE 3: ADVANCED FEATURES
+# ============================================================
+
+import subprocess
+import time
+from datetime import datetime
+
+# Activity log storage (in-memory, would use DB in production)
+_activity_log: List[dict] = []
+
+
+class ThumbnailRequest(BaseModel):
+    video_path: str
+    count: int = 4  # Number of thumbnails to generate
+    width: int = 320
+
+
+class BatchProcessRequest(BaseModel):
+    video_paths: List[str]
+    template_id: Optional[str] = None
+    generate_thumbnails: bool = True
+
+
+class MultiPlatformExportRequest(BaseModel):
+    video_path: str
+    platforms: List[str] = ["instagram_reel", "youtube_short", "tiktok"]
+    add_watermark: bool = False
+    watermark_path: Optional[str] = None
+
+
+class WatermarkRequest(BaseModel):
+    video_path: str
+    watermark_path: str
+    position: str = "bottom-right"  # top-left, top-right, bottom-left, bottom-right, center
+    opacity: float = 0.7
+    scale: float = 0.15  # Scale relative to video width
+
+
+class ActivityLogEntry(BaseModel):
+    id: int
+    action: str
+    name: str
+    details: Optional[Dict[str, Any]] = None
+    timestamp: str
+
+
+def _log_activity(action: str, name: str, details: Optional[dict] = None):
+    """Log an activity entry"""
+    global _activity_log
+    entry = {
+        "id": len(_activity_log) + 1,
+        "action": action,
+        "name": name,
+        "details": details,
+        "timestamp": datetime.now().isoformat()
+    }
+    _activity_log.insert(0, entry)
+    # Keep only last 100 entries
+    _activity_log = _activity_log[:100]
+    return entry
+
+
+@router.post("/thumbnails")
+async def generate_thumbnails(request: ThumbnailRequest):
+    """Generate thumbnail images from a video at evenly spaced intervals"""
+    video_path = Path(request.video_path)
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail=f"Video not found: {request.video_path}")
+
+    try:
+        # Get video duration using ffprobe
+        probe_cmd = [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(video_path)
+        ]
+        result = subprocess.run(probe_cmd, capture_output=True, text=True)
+        duration = float(result.stdout.strip())
+
+        # Calculate timestamps for thumbnails
+        interval = duration / (request.count + 1)
+        timestamps = [interval * (i + 1) for i in range(request.count)]
+
+        # Output directory
+        output_dir = Path(os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output')) / 'thumbnails'
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        thumbnails = []
+        for i, ts in enumerate(timestamps):
+            output_path = output_dir / f"{video_path.stem}_thumb_{i+1}.jpg"
+
+            # Generate thumbnail using ffmpeg
+            cmd = [
+                "ffmpeg", "-y", "-ss", str(ts),
+                "-i", str(video_path),
+                "-vframes", "1",
+                "-vf", f"scale={request.width}:-1",
+                str(output_path)
+            ]
+            subprocess.run(cmd, capture_output=True)
+
+            if output_path.exists():
+                thumbnails.append({
+                    "path": str(output_path),
+                    "timestamp": ts,
+                    "index": i + 1
+                })
+
+        _log_activity("Thumbnails generated", video_path.name, {"count": len(thumbnails)})
+
+        return {
+            "status": "ok",
+            "video": str(video_path),
+            "thumbnails": thumbnails,
+            "duration": duration
+        }
+
+    except Exception as e:
+        logging.exception(f"Failed to generate thumbnails: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/batch")
+async def batch_process(request: BatchProcessRequest, background_tasks: BackgroundTasks):
+    """Process multiple videos in batch"""
+    # Validate all videos exist
+    for path in request.video_paths:
+        if not Path(path).exists():
+            raise HTTPException(status_code=404, detail=f"Video not found: {path}")
+
+    job_id = f"batch_{int(time.time())}"
+
+    # Start batch processing in background
+    async def process_batch():
+        results = []
+        for video_path in request.video_paths:
+            try:
+                result = {"video": video_path, "status": "completed"}
+
+                # Generate thumbnails if requested
+                if request.generate_thumbnails:
+                    thumb_result = await generate_thumbnails(
+                        ThumbnailRequest(video_path=video_path)
+                    )
+                    result["thumbnails"] = thumb_result.get("thumbnails", [])
+
+                # Apply template if specified
+                if request.template_id and HAS_WORKERS:
+                    compiler = TemplateCompiler()
+                    compile_result = compiler.compile(
+                        request.template_id,
+                        [Path(video_path)]
+                    )
+                    result["compiled"] = compile_result.success
+                    result["output_path"] = compile_result.output_path
+
+                results.append(result)
+                _log_activity("Batch processed", Path(video_path).name)
+
+            except Exception as e:
+                results.append({
+                    "video": video_path,
+                    "status": "failed",
+                    "error": str(e)
+                })
+
+        return results
+
+    background_tasks.add_task(process_batch)
+    _log_activity("Batch job started", f"{len(request.video_paths)} videos", {"job_id": job_id})
+
+    return {
+        "status": "ok",
+        "job_id": job_id,
+        "message": f"Processing {len(request.video_paths)} videos",
+        "videos": request.video_paths
+    }
+
+
+@router.post("/export-all")
+async def export_all_platforms(request: MultiPlatformExportRequest, background_tasks: BackgroundTasks):
+    """Export a video to multiple platforms at once"""
+    video_path = Path(request.video_path)
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail=f"Video not found: {request.video_path}")
+
+    if not HAS_WORKERS:
+        raise HTTPException(status_code=503, detail="Worker modules not available")
+
+    try:
+        compiler = TemplateCompiler()
+        results = []
+
+        for platform in request.platforms:
+            try:
+                result = compiler.compile(
+                    platform,
+                    [video_path],
+                    output_name=f"{video_path.stem}_{platform}"
+                )
+
+                output_data = {
+                    "platform": platform,
+                    "success": result.success,
+                    "output_path": result.output_path,
+                    "duration": result.duration
+                }
+
+                # Apply watermark if requested
+                if request.add_watermark and result.success and request.watermark_path:
+                    watermarked = await add_watermark(WatermarkRequest(
+                        video_path=result.output_path,
+                        watermark_path=request.watermark_path
+                    ))
+                    output_data["watermarked"] = watermarked.get("status") == "ok"
+                    output_data["output_path"] = watermarked.get("output_path", result.output_path)
+
+                results.append(output_data)
+
+            except Exception as e:
+                results.append({
+                    "platform": platform,
+                    "success": False,
+                    "error": str(e)
+                })
+
+        _log_activity("Multi-platform export", video_path.name, {
+            "platforms": request.platforms,
+            "successful": sum(1 for r in results if r.get("success"))
+        })
+
+        return {
+            "status": "ok",
+            "source": str(video_path),
+            "exports": results
+        }
+
+    except Exception as e:
+        logging.exception(f"Failed to export: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/watermark")
+async def add_watermark(request: WatermarkRequest):
+    """Add a watermark/logo overlay to a video"""
+    video_path = Path(request.video_path)
+    watermark_path = Path(request.watermark_path)
+
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail=f"Video not found: {request.video_path}")
+    if not watermark_path.exists():
+        raise HTTPException(status_code=404, detail=f"Watermark not found: {request.watermark_path}")
+
+    try:
+        output_dir = Path(os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output')) / 'watermarked'
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{video_path.stem}_watermarked{video_path.suffix}"
+
+        # Position mapping for ffmpeg overlay
+        positions = {
+            "top-left": "10:10",
+            "top-right": "main_w-overlay_w-10:10",
+            "bottom-left": "10:main_h-overlay_h-10",
+            "bottom-right": "main_w-overlay_w-10:main_h-overlay_h-10",
+            "center": "(main_w-overlay_w)/2:(main_h-overlay_h)/2"
+        }
+        pos = positions.get(request.position, positions["bottom-right"])
+
+        # Build ffmpeg command
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(video_path),
+            "-i", str(watermark_path),
+            "-filter_complex",
+            f"[1:v]scale=iw*{request.scale}:-1,format=rgba,colorchannelmixer=aa={request.opacity}[wm];"
+            f"[0:v][wm]overlay={pos}",
+            "-c:a", "copy",
+            str(output_path)
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            raise Exception(f"FFmpeg error: {result.stderr}")
+
+        _log_activity("Watermark added", video_path.name, {"position": request.position})
+
+        return {
+            "status": "ok",
+            "input": str(video_path),
+            "output_path": str(output_path),
+            "watermark": str(watermark_path),
+            "position": request.position
+        }
+
+    except Exception as e:
+        logging.exception(f"Failed to add watermark: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/activity")
+async def get_activity_log(limit: int = 20):
+    """Get recent activity log"""
+    return {
+        "activities": _activity_log[:limit],
+        "total": len(_activity_log)
+    }
+
+
+@router.delete("/activity")
+async def clear_activity_log():
+    """Clear activity log"""
+    global _activity_log
+    _activity_log = []
+    return {"status": "ok", "message": "Activity log cleared"}
+
+
+# ============================================================
+# CAPTION GENERATION (Whisper)
+# ============================================================
+
+class CaptionRequest(BaseModel):
+    video_path: str
+    language: str = "en"
+    format: str = "srt"  # srt, vtt, json
+
+
+class CaptionSegment(BaseModel):
+    start: float
+    end: float
+    text: str
+
+
+try:
+    from openai import OpenAI
+    HAS_OPENAI = True
+except ImportError:
+    HAS_OPENAI = False
+
+
+@router.post("/caption")
+async def generate_captions(request: CaptionRequest):
+    """Generate captions/subtitles for a video using Whisper"""
+    video_path = Path(request.video_path)
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail=f"Video not found: {request.video_path}")
+
+    if not HAS_OPENAI:
+        raise HTTPException(status_code=503, detail="OpenAI module not available")
+
+    try:
+        # Extract audio from video
+        audio_path = Path("/tmp") / f"{video_path.stem}_audio.mp3"
+        extract_cmd = [
+            "ffmpeg", "-y",
+            "-i", str(video_path),
+            "-vn", "-acodec", "libmp3lame",
+            "-q:a", "4",
+            str(audio_path)
+        ]
+        subprocess.run(extract_cmd, capture_output=True)
+
+        if not audio_path.exists():
+            raise Exception("Failed to extract audio from video")
+
+        # Transcribe with Whisper API
+        client = OpenAI()
+
+        with open(audio_path, "rb") as audio_file:
+            transcription = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                language=request.language,
+                response_format="verbose_json",
+                timestamp_granularities=["segment"]
+            )
+
+        # Clean up temp audio file
+        audio_path.unlink()
+
+        # Parse segments
+        segments = []
+        if hasattr(transcription, 'segments'):
+            for seg in transcription.segments:
+                segments.append({
+                    "start": seg.get("start", 0),
+                    "end": seg.get("end", 0),
+                    "text": seg.get("text", "").strip()
+                })
+
+        # Generate output file
+        output_dir = Path(os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output')) / 'captions'
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        if request.format == "srt":
+            output_path = output_dir / f"{video_path.stem}.srt"
+            srt_content = _generate_srt(segments)
+            with open(output_path, "w") as f:
+                f.write(srt_content)
+
+        elif request.format == "vtt":
+            output_path = output_dir / f"{video_path.stem}.vtt"
+            vtt_content = _generate_vtt(segments)
+            with open(output_path, "w") as f:
+                f.write(vtt_content)
+
+        else:  # json
+            output_path = output_dir / f"{video_path.stem}_captions.json"
+            with open(output_path, "w") as f:
+                json.dump({"segments": segments, "text": transcription.text}, f, indent=2)
+
+        _log_activity("Captions generated", video_path.name, {
+            "format": request.format,
+            "segments": len(segments)
+        })
+
+        return {
+            "status": "ok",
+            "video": str(video_path),
+            "output_path": str(output_path),
+            "format": request.format,
+            "segments": len(segments),
+            "text": transcription.text if hasattr(transcription, 'text') else ""
+        }
+
+    except Exception as e:
+        logging.exception(f"Failed to generate captions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _generate_srt(segments: List[dict]) -> str:
+    """Generate SRT subtitle format"""
+    lines = []
+    for i, seg in enumerate(segments, 1):
+        start = _format_timestamp_srt(seg["start"])
+        end = _format_timestamp_srt(seg["end"])
+        lines.append(f"{i}")
+        lines.append(f"{start} --> {end}")
+        lines.append(seg["text"])
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _generate_vtt(segments: List[dict]) -> str:
+    """Generate WebVTT subtitle format"""
+    lines = ["WEBVTT", ""]
+    for seg in segments:
+        start = _format_timestamp_vtt(seg["start"])
+        end = _format_timestamp_vtt(seg["end"])
+        lines.append(f"{start} --> {end}")
+        lines.append(seg["text"])
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _format_timestamp_srt(seconds: float) -> str:
+    """Format seconds to SRT timestamp (HH:MM:SS,mmm)"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    ms = int((seconds % 1) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{ms:03d}"
+
+
+def _format_timestamp_vtt(seconds: float) -> str:
+    """Format seconds to VTT timestamp (HH:MM:SS.mmm)"""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    ms = int((seconds % 1) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
+
+
+# ============================================================
+# REAL-TIME PROGRESS (Server-Sent Events)
+# ============================================================
+
+from fastapi.responses import StreamingResponse
+import asyncio
+
+# Job progress storage
+_job_progress: Dict[str, dict] = {}
+
+
+def update_job_progress(job_id: str, progress: int, status: str, message: str = ""):
+    """Update progress for a job"""
+    _job_progress[job_id] = {
+        "job_id": job_id,
+        "progress": progress,
+        "status": status,
+        "message": message,
+        "updated_at": datetime.now().isoformat()
+    }
+
+
+@router.get("/progress/{job_id}")
+async def get_job_progress(job_id: str):
+    """Get current progress for a job"""
+    if job_id not in _job_progress:
+        return {"job_id": job_id, "progress": 0, "status": "unknown", "message": "Job not found"}
+    return _job_progress[job_id]
+
+
+@router.get("/progress/{job_id}/stream")
+async def stream_job_progress(job_id: str):
+    """Stream job progress updates via Server-Sent Events"""
+
+    async def event_generator():
+        last_progress = -1
+        timeout_count = 0
+        max_timeout = 300  # 5 minutes max
+
+        while timeout_count < max_timeout:
+            if job_id in _job_progress:
+                current = _job_progress[job_id]
+                if current["progress"] != last_progress:
+                    last_progress = current["progress"]
+                    yield f"data: {json.dumps(current)}\n\n"
+
+                    # Job completed or failed
+                    if current["status"] in ["completed", "failed"]:
+                        break
+            else:
+                yield f"data: {json.dumps({'job_id': job_id, 'progress': 0, 'status': 'pending'})}\n\n"
+
+            await asyncio.sleep(1)
+            timeout_count += 1
+
+        yield f"data: {json.dumps({'job_id': job_id, 'status': 'timeout'})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+
+
+@router.get("/jobs")
+async def list_jobs():
+    """List all tracked jobs"""
+    return {
+        "jobs": list(_job_progress.values()),
+        "total": len(_job_progress)
+    }
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_job(job_id: str):
+    """Remove a job from tracking"""
+    if job_id in _job_progress:
+        del _job_progress[job_id]
+        return {"status": "ok", "message": f"Job {job_id} removed"}
+    raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
