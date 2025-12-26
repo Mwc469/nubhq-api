@@ -1,5 +1,6 @@
+from datetime import datetime, timedelta
 from app.database import SessionLocal, engine, Base
-from app.models import Approval, FanMessage, UserSettings
+from app.models import Approval, FanMessage, UserSettings, ScheduledPost
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -10,6 +11,7 @@ db = SessionLocal()
 db.query(Approval).delete()
 db.query(FanMessage).delete()
 db.query(UserSettings).delete()
+db.query(ScheduledPost).delete()
 
 # Sample approvals
 approvals = [
@@ -73,6 +75,47 @@ fan_messages = [
     ),
 ]
 
+# Sample scheduled posts
+now = datetime.utcnow()
+scheduled_posts = [
+    ScheduledPost(
+        title="New Year Special Post",
+        content="Celebrating the new year with you all!",
+        scheduled_at=now + timedelta(days=1, hours=10),
+        status="scheduled"
+    ),
+    ScheduledPost(
+        title="Behind the Scenes",
+        content="A look at my creative process",
+        scheduled_at=now + timedelta(days=3, hours=14),
+        status="scheduled"
+    ),
+    ScheduledPost(
+        title="Q&A Session",
+        content="Answer your questions live",
+        scheduled_at=now + timedelta(days=5, hours=18),
+        status="scheduled"
+    ),
+    ScheduledPost(
+        title="Exclusive Content Drop",
+        content="New exclusive content for subscribers",
+        scheduled_at=now + timedelta(days=7, hours=12),
+        status="scheduled"
+    ),
+    ScheduledPost(
+        title="Weekend Livestream",
+        content="Join me for a fun weekend stream",
+        scheduled_at=now + timedelta(days=10, hours=20),
+        status="scheduled"
+    ),
+    ScheduledPost(
+        title="Monthly Recap",
+        content="Highlights from this month",
+        scheduled_at=now + timedelta(days=14, hours=16),
+        status="scheduled"
+    ),
+]
+
 # Default settings
 settings = UserSettings(
     user_id="default",
@@ -83,12 +126,14 @@ settings = UserSettings(
 
 db.add_all(approvals)
 db.add_all(fan_messages)
+db.add_all(scheduled_posts)
 db.add(settings)
 db.commit()
 
 print("Database seeded successfully!")
 print(f"  - {len(approvals)} approvals")
 print(f"  - {len(fan_messages)} fan messages")
+print(f"  - {len(scheduled_posts)} scheduled posts")
 print(f"  - Default settings created")
 
 db.close()
