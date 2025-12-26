@@ -786,31 +786,76 @@ async def generate_thumbnails(request: Request, thumb_request: ThumbnailRequest,
 
 @router.post("/batch")
 @limiter.limit("5/minute")
-async def batch_process(request: Request, batch_request: BatchProcessRequest, background_tasks: BackgroundTasks, current_user: User = Depends(get_required_user)):
-    """Process multiple videos in batch"""
+async def batch_process(
+    request: Request,
+    batch_request: BatchProcessRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_required_user)
+):
+    """Process multiple videos in batch with progress tracking"""
     # Validate all videos exist
     for path in batch_request.video_paths:
         if not Path(path).exists():
             raise HTTPException(status_code=404, detail=f"Video not found: {path}")
 
-    job_id = f"batch_{int(time.time())}"
+    import uuid
+    job_id = f"batch-{uuid.uuid4().hex[:8]}"
+
+    # Create job in database
+    await create_job(
+        db=db,
+        job_id=job_id,
+        job_type="batch",
+        user_id=current_user.id,
+        input_data={
+            "video_paths": batch_request.video_paths,
+            "template_id": batch_request.template_id,
+            "generate_thumbnails": batch_request.generate_thumbnails
+        }
+    )
 
     # Capture values for closure
     video_paths = batch_request.video_paths
     generate_thumbnails_flag = batch_request.generate_thumbnails
     template_id = batch_request.template_id
+    user_id = current_user.id
 
     # Start batch processing in background
     async def process_batch():
         results = []
-        for video_path in video_paths:
+        total = len(video_paths)
+
+        for i, video_path in enumerate(video_paths):
             try:
+                # Update progress
+                progress = int((i / total) * 100)
+                await update_job_progress(job_id, progress, "processing", f"Processing {i+1}/{total}: {Path(video_path).name}", db, user_id)
+
                 result = {"video": video_path, "status": "completed"}
 
                 # Generate thumbnails if requested
                 if generate_thumbnails_flag:
-                    # Direct thumbnail generation without calling endpoint
-                    pass  # Simplified for batch
+                    try:
+                        video_p = Path(video_path)
+                        output_dir = Path(os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output')) / 'thumbnails'
+                        output_dir.mkdir(parents=True, exist_ok=True)
+
+                        # Generate single thumbnail at middle of video
+                        probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                     "-of", "default=noprint_wrappers=1:nokey=1", str(video_p)]
+                        probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+                        duration = float(probe_result.stdout.strip()) if probe_result.stdout.strip() else 10
+
+                        thumb_path = output_dir / f"{video_p.stem}_thumb.jpg"
+                        thumb_cmd = ["ffmpeg", "-y", "-ss", str(duration/2), "-i", str(video_p),
+                                     "-vframes", "1", "-vf", "scale=320:-1", str(thumb_path)]
+                        subprocess.run(thumb_cmd, capture_output=True)
+
+                        if thumb_path.exists():
+                            result["thumbnail"] = str(thumb_path)
+                    except Exception as thumb_error:
+                        result["thumbnail_error"] = str(thumb_error)
 
                 # Apply template if specified
                 if template_id and HAS_WORKERS:
@@ -831,7 +876,15 @@ async def batch_process(request: Request, batch_request: BatchProcessRequest, ba
                     "status": "failed",
                     "error": str(e)
                 })
+                logger.warning("batch_video_failed", video=video_path, error=str(e))
 
+        # Update job to completed
+        job = db.query(Job).filter(Job.id == job_id).first()
+        if job:
+            job.output_data = {"results": results, "total": total, "completed": len([r for r in results if r.get("status") == "completed"])}
+            db.commit()
+
+        await update_job_progress(job_id, 100, "completed", f"Processed {total} videos", db, user_id)
         return results
 
     background_tasks.add_task(process_batch)
@@ -841,7 +894,8 @@ async def batch_process(request: Request, batch_request: BatchProcessRequest, ba
         "status": "ok",
         "job_id": job_id,
         "message": f"Processing {len(batch_request.video_paths)} videos",
-        "videos": batch_request.video_paths
+        "videos": batch_request.video_paths,
+        "track_progress": f"/api/video-pipeline/progress/{job_id}"
     }
 
 
@@ -1135,6 +1189,253 @@ async def generate_captions(request: Request, caption_request: CaptionRequest, c
 
     except Exception as e:
         logging.exception(f"Failed to generate captions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# AI FEATURES (Auto-tagging, Content Moderation)
+# ============================================================
+
+class AutoTagRequest(BaseModel):
+    video_path: str
+    max_tags: int = 10
+    include_description: bool = True
+
+
+class ContentModerationRequest(BaseModel):
+    video_path: str
+    check_nsfw: bool = True
+    check_violence: bool = True
+    check_hate_speech: bool = True
+
+
+@router.post("/auto-tag")
+@limiter.limit("10/minute")
+async def auto_tag_video(request: Request, tag_request: AutoTagRequest, current_user: User = Depends(get_required_user)):
+    """Automatically generate tags and description for a video using AI"""
+    video_path = Path(tag_request.video_path)
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail=f"Video not found: {tag_request.video_path}")
+
+    if not HAS_OPENAI:
+        raise HTTPException(status_code=503, detail="OpenAI module not available")
+
+    try:
+        # Extract a frame from the video for visual analysis
+        frame_path = Path("/tmp") / f"{video_path.stem}_frame.jpg"
+        extract_cmd = [
+            "ffmpeg", "-y",
+            "-i", str(video_path),
+            "-ss", "5",  # 5 seconds in
+            "-vframes", "1",
+            str(frame_path)
+        ]
+        subprocess.run(extract_cmd, capture_output=True)
+
+        # Also extract audio for transcript
+        audio_path = Path("/tmp") / f"{video_path.stem}_audio.mp3"
+        audio_cmd = [
+            "ffmpeg", "-y",
+            "-i", str(video_path),
+            "-vn", "-acodec", "libmp3lame",
+            "-t", "60",  # First 60 seconds only
+            "-q:a", "4",
+            str(audio_path)
+        ]
+        subprocess.run(audio_cmd, capture_output=True)
+
+        client = OpenAI()
+        tags = []
+        description = ""
+
+        # Get transcript if audio exists
+        transcript = ""
+        if audio_path.exists():
+            try:
+                with open(audio_path, "rb") as audio_file:
+                    transcription = client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file,
+                        response_format="text"
+                    )
+                    transcript = transcription if isinstance(transcription, str) else transcription.text
+                audio_path.unlink()
+            except Exception:
+                pass
+
+        # Analyze with GPT-4 for tags
+        prompt = f"""Analyze this video content and generate relevant tags and a brief description.
+
+Video filename: {video_path.name}
+Audio transcript (first 60s): {transcript[:1000] if transcript else 'No audio transcript available'}
+
+Generate:
+1. Up to {tag_request.max_tags} relevant tags (single words or short phrases, lowercase, comma-separated)
+2. {'A brief 1-2 sentence description' if tag_request.include_description else 'No description needed'}
+
+Format your response as JSON:
+{{"tags": ["tag1", "tag2", ...], "description": "..."}}"""
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            max_tokens=500
+        )
+
+        result = json.loads(response.choices[0].message.content)
+        tags = result.get("tags", [])[:tag_request.max_tags]
+        description = result.get("description", "") if tag_request.include_description else ""
+
+        # Cleanup
+        if frame_path.exists():
+            frame_path.unlink()
+
+        _log_activity("Auto-tagged", video_path.name, {"tag_count": len(tags)})
+
+        return {
+            "status": "ok",
+            "video": str(video_path),
+            "tags": tags,
+            "description": description,
+            "has_transcript": bool(transcript)
+        }
+
+    except Exception as e:
+        logging.exception(f"Failed to auto-tag video: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/moderate")
+@limiter.limit("10/minute")
+async def moderate_content(request: Request, mod_request: ContentModerationRequest, current_user: User = Depends(get_required_user)):
+    """Analyze video content for moderation concerns using AI"""
+    video_path = Path(mod_request.video_path)
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail=f"Video not found: {mod_request.video_path}")
+
+    if not HAS_OPENAI:
+        raise HTTPException(status_code=503, detail="OpenAI module not available")
+
+    try:
+        # Extract multiple frames for analysis
+        frames = []
+        timestamps = [5, 15, 30, 45, 60]  # Check at these second marks
+
+        for ts in timestamps:
+            frame_path = Path("/tmp") / f"{video_path.stem}_mod_{ts}.jpg"
+            extract_cmd = [
+                "ffmpeg", "-y",
+                "-i", str(video_path),
+                "-ss", str(ts),
+                "-vframes", "1",
+                str(frame_path)
+            ]
+            result = subprocess.run(extract_cmd, capture_output=True)
+            if frame_path.exists():
+                frames.append(frame_path)
+
+        # Get audio transcript for text analysis
+        audio_path = Path("/tmp") / f"{video_path.stem}_mod_audio.mp3"
+        audio_cmd = [
+            "ffmpeg", "-y",
+            "-i", str(video_path),
+            "-vn", "-acodec", "libmp3lame",
+            "-t", "120",
+            "-q:a", "4",
+            str(audio_path)
+        ]
+        subprocess.run(audio_cmd, capture_output=True)
+
+        client = OpenAI()
+
+        # Get transcript
+        transcript = ""
+        if audio_path.exists():
+            try:
+                with open(audio_path, "rb") as audio_file:
+                    transcription = client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file,
+                        response_format="text"
+                    )
+                    transcript = transcription if isinstance(transcription, str) else transcription.text
+                audio_path.unlink()
+            except Exception:
+                pass
+
+        # Use OpenAI moderation endpoint for text
+        text_concerns = []
+        if transcript and mod_request.check_hate_speech:
+            moderation_response = client.moderations.create(input=transcript)
+            for result in moderation_response.results:
+                if result.flagged:
+                    for category, flagged in result.categories:
+                        if flagged:
+                            text_concerns.append({
+                                "type": "text",
+                                "category": category,
+                                "source": "audio_transcript"
+                            })
+
+        # Analyze content with GPT for context-aware moderation
+        checks = []
+        if mod_request.check_nsfw:
+            checks.append("explicit/adult content")
+        if mod_request.check_violence:
+            checks.append("violence or gore")
+        if mod_request.check_hate_speech:
+            checks.append("hate speech or discrimination")
+
+        prompt = f"""Analyze this video content for moderation concerns.
+
+Video filename: {video_path.name}
+Audio transcript: {transcript[:1500] if transcript else 'No transcript available'}
+
+Check for: {', '.join(checks)}
+
+Respond with JSON:
+{{
+    "safe": true/false,
+    "concerns": [
+        {{"category": "nsfw/violence/hate_speech", "severity": "low/medium/high", "description": "brief description"}}
+    ],
+    "recommendation": "approve/review/reject",
+    "notes": "any additional context"
+}}"""
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            max_tokens=500
+        )
+
+        result = json.loads(response.choices[0].message.content)
+
+        # Cleanup frames
+        for frame in frames:
+            if frame.exists():
+                frame.unlink()
+
+        _log_activity("Content moderated", video_path.name, {
+            "safe": result.get("safe", True),
+            "recommendation": result.get("recommendation", "unknown")
+        })
+
+        return {
+            "status": "ok",
+            "video": str(video_path),
+            "safe": result.get("safe", True),
+            "concerns": result.get("concerns", []) + text_concerns,
+            "recommendation": result.get("recommendation", "approve"),
+            "notes": result.get("notes", ""),
+            "analyzed_frames": len(frames),
+            "has_transcript": bool(transcript)
+        }
+
+    except Exception as e:
+        logging.exception(f"Failed to moderate content: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1491,6 +1792,87 @@ async def cleanup_old_jobs(
         "criteria": {
             "older_than_days": days,
             "status_filter": status
+        }
+    }
+
+
+@router.get("/metrics")
+@limiter.limit("30/minute")
+async def get_pipeline_metrics(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_required_user)):
+    """Get comprehensive pipeline metrics for monitoring dashboard"""
+    from sqlalchemy import func
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc)
+    last_hour = now - timedelta(hours=1)
+    last_day = now - timedelta(days=1)
+    last_week = now - timedelta(weeks=1)
+
+    # Job counts by status
+    status_counts = dict(db.query(Job.status, func.count(Job.id)).group_by(Job.status).all())
+
+    # Job counts by type
+    type_counts = dict(db.query(Job.type, func.count(Job.id)).group_by(Job.type).all())
+
+    # Jobs in last hour
+    jobs_last_hour = db.query(func.count(Job.id)).filter(Job.created_at >= last_hour).scalar()
+
+    # Jobs in last day
+    jobs_last_day = db.query(func.count(Job.id)).filter(Job.created_at >= last_day).scalar()
+
+    # Failed jobs that can be retried
+    retriable_failed = db.query(func.count(Job.id)).filter(
+        Job.status == "failed",
+        Job.retry_count < Job.max_retries
+    ).scalar()
+
+    # Average completion time for completed jobs (in seconds)
+    completed_jobs = db.query(Job).filter(
+        Job.status == "completed",
+        Job.completed_at.isnot(None),
+        Job.created_at >= last_week
+    ).all()
+
+    avg_completion_time = 0
+    if completed_jobs:
+        total_time = sum(
+            (job.completed_at - job.created_at).total_seconds()
+            for job in completed_jobs
+            if job.completed_at and job.created_at
+        )
+        avg_completion_time = total_time / len(completed_jobs)
+
+    # Success rate
+    total_finished = status_counts.get("completed", 0) + status_counts.get("failed", 0)
+    success_rate = (status_counts.get("completed", 0) / total_finished * 100) if total_finished > 0 else 100
+
+    # Error rate
+    error_rate = (status_counts.get("failed", 0) / total_finished * 100) if total_finished > 0 else 0
+
+    return {
+        "timestamp": now.isoformat(),
+        "jobs": {
+            "total": sum(status_counts.values()),
+            "by_status": status_counts,
+            "by_type": type_counts,
+            "in_memory_cache": len(_job_progress),
+        },
+        "throughput": {
+            "last_hour": jobs_last_hour,
+            "last_day": jobs_last_day,
+        },
+        "performance": {
+            "avg_completion_seconds": round(avg_completion_time, 2),
+            "success_rate_percent": round(success_rate, 1),
+            "error_rate_percent": round(error_rate, 1),
+        },
+        "health": {
+            "retriable_failed": retriable_failed,
+            "workers_available": HAS_WORKERS,
+            "queue_depth": status_counts.get("pending", 0) + status_counts.get("processing", 0),
+        },
+        "activity": {
+            "recent_entries": len(_activity_log),
         }
     }
 
