@@ -13,6 +13,7 @@ from .activity import router as activity_router
 from .email_campaigns import router as email_campaigns_router
 from .media import router as media_router
 from .video_pipeline import router as video_pipeline_router
+from .webhooks import router as webhooks_router
 
 __all__ = [
     "approvals_router",
@@ -30,4 +31,5 @@ __all__ = [
     "email_campaigns_router",
     "media_router",
     "video_pipeline_router",
+    "webhooks_router",
 ]

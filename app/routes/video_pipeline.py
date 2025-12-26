@@ -4,13 +4,21 @@ Video Pipeline API Routes
 Endpoints for video processing, combining, and feedback.
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from pathlib import Path
+from sqlalchemy.orm import Session
 import logging
 import json
 import os
+import re
+
+from ..auth import get_current_user, get_required_user
+from ..database import get_db
+from ..models.user import User
+from ..models.job import Job
+from ..limiter import limiter
 
 # Import worker modules
 try:
@@ -147,6 +155,55 @@ class PipelineStatsResponse(BaseModel):
 
 
 # ============================================================
+# SECURITY HELPERS
+# ============================================================
+
+# Allowed video extensions
+ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v'}
+
+# Allowed directories for video processing
+ALLOWED_PATHS = [
+    '/Volumes/NUB_Workspace',
+    '/tmp',
+    os.environ.get('NUBHQ_INPUT', '/Volumes/NUB_Workspace/input'),
+    os.environ.get('NUBHQ_OUTPUT', '/Volumes/NUB_Workspace/output'),
+]
+
+
+def validate_video_path(path_str: str) -> Path:
+    """Validate a video path for security"""
+    path = Path(path_str).resolve()
+
+    # Check extension
+    if path.suffix.lower() not in ALLOWED_VIDEO_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type. Allowed: {', '.join(ALLOWED_VIDEO_EXTENSIONS)}"
+        )
+
+    # Check path is within allowed directories
+    path_str_resolved = str(path)
+    allowed = any(path_str_resolved.startswith(allowed_path) for allowed_path in ALLOWED_PATHS if allowed_path)
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="Access to this path is not allowed"
+        )
+
+    return path
+
+
+def validate_template_id(template_id: str) -> str:
+    """Validate template ID format"""
+    if not re.match(r'^[a-z0-9_-]+$', template_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Template ID must contain only lowercase letters, numbers, hyphens, and underscores"
+        )
+    return template_id
+
+
+# ============================================================
 # ENDPOINTS
 # ============================================================
 
@@ -183,19 +240,25 @@ async def list_templates():
 
 
 @router.post("/highlight", response_model=HighlightResponse)
-async def create_highlight(request: HighlightRequest, background_tasks: BackgroundTasks):
+@limiter.limit("10/minute")
+async def create_highlight(
+    request: Request,
+    highlight_request: HighlightRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_required_user)
+):
     """Create a highlight reel from a video"""
     if not HAS_WORKERS:
         raise HTTPException(status_code=503, detail="Worker modules not available")
 
-    video_path = Path(request.video_path)
+    video_path = validate_video_path(highlight_request.video_path)
     if not video_path.exists():
-        raise HTTPException(status_code=404, detail=f"Video not found: {request.video_path}")
+        raise HTTPException(status_code=404, detail=f"Video not found: {highlight_request.video_path}")
 
     result = create_highlight_reel(
         str(video_path),
-        request.duration,
-        request.output_name
+        highlight_request.duration,
+        highlight_request.output_name
     )
 
     return HighlightResponse(

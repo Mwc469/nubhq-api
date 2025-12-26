@@ -9,6 +9,8 @@ from .template import Template
 from .activity import Activity
 from .email_campaign import EmailCampaign
 from .media import Media
+from .job import Job
+from .webhook import Webhook
 
 __all__ = [
     "Approval",
@@ -22,4 +24,6 @@ __all__ = [
     "Activity",
     "EmailCampaign",
     "Media",
+    "Job",
+    "Webhook",
 ]
