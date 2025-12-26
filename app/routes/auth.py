@@ -5,8 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from ..database import get_db
 from ..models.user import User
@@ -19,9 +17,9 @@ from ..auth import (
     refresh_access_token,
 )
 from ..config import get_settings
+from ..limiter import limiter
 
 settings = get_settings()
-limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 

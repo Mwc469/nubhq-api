@@ -7,6 +7,9 @@ from functools import lru_cache
 from pydantic_settings import BaseSettings
 from typing import List
 
+# Generate a fallback secret key once at module load
+_FALLBACK_SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_urlsafe(32)
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
@@ -17,7 +20,7 @@ class Settings(BaseSettings):
     environment: str = "development"
 
     # Security
-    secret_key: str = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
+    secret_key: str = _FALLBACK_SECRET_KEY
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60  # 1 hour
     refresh_token_expire_days: int = 7
@@ -52,7 +55,7 @@ def get_settings() -> Settings:
 
 # Validate secret key on startup
 settings = get_settings()
-if settings.environment == "production" and settings.secret_key == secrets.token_urlsafe(32):
+if settings.environment == "production" and not os.getenv("SECRET_KEY"):
     raise ValueError(
         "SECRET_KEY must be set in production! "
         "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""

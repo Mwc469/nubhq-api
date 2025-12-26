@@ -3,13 +3,13 @@ NubHQ API - FastAPI application entry point.
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from .config import get_settings
 from .database import engine, Base
 from .middleware import SecurityHeadersMiddleware, RequestLoggingMiddleware
+from .limiter import limiter
 from .routes import (
     approvals_router,
     dashboard_router,
@@ -31,9 +31,6 @@ settings = get_settings()
 
 # Create tables (in production, use Alembic migrations instead)
 Base.metadata.create_all(bind=engine)
-
-# Rate limiter
-limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="NubHQ API",
