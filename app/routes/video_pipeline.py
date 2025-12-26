@@ -21,7 +21,12 @@ try:
         sync_videos,
         compile_for_platform,
     )
-    from ..worker.intelligent_processor import PreferenceLearner, Config
+    from ..worker.intelligent_processor import (
+        PreferenceLearner,
+        Config,
+        VideoAnalyzer,
+        ApprovalQueueIntegration,
+    )
     HAS_WORKERS = True
 except ImportError as e:
     logging.warning(f"Worker modules not available: {e}")
@@ -348,20 +353,51 @@ async def approve_review_video(filename: str, recipient: str = "schedule"):
         raise HTTPException(status_code=404, detail=f"Video not found in review: {filename}")
 
     try:
-        # Move to auto-queued
+        # Analyze the video
+        analyzer = VideoAnalyzer()
+        analysis = analyzer.analyze(review_path)
+
+        # Score engagement
+        scorer = EngagementScorer()
+        engagement = scorer.score(str(review_path), pre_computed={
+            'duration': analysis.duration,
+            'fps': analysis.fps,
+        })
+
+        # Move to auto-queued directory
         dest = Config.AUTO_QUEUED_DIR / filename
+        if dest.exists():
+            import time
+            dest = Config.AUTO_QUEUED_DIR / f"{review_path.stem}_{int(time.time())}{review_path.suffix}"
         review_path.rename(dest)
 
-        # TODO: Push to approval queue API
-        # This would require analyzing the video and creating an approval
+        # Push to approval queue API
+        queue = ApprovalQueueIntegration()
+        success, result = queue.push_to_queue(
+            video_path=dest,
+            analysis=analysis,
+            engagement=engagement,
+            decisions={"manual_approval": "true"},
+            recipient=recipient
+        )
 
-        return {
-            "status": "ok",
-            "message": f"Moved to approval queue",
-            "path": str(dest)
-        }
+        if success:
+            return {
+                "status": "ok",
+                "message": "Moved to approval queue",
+                "path": str(dest),
+                "approval_id": result
+            }
+        else:
+            # Still moved, but queue push failed
+            return {
+                "status": "partial",
+                "message": f"Moved but queue push failed: {result}",
+                "path": str(dest)
+            }
 
     except Exception as e:
+        logging.exception(f"Failed to approve video: {filename}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
