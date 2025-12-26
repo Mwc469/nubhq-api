@@ -1,21 +1,62 @@
+"""
+Templates routes for CRUD operations on content templates.
+"""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from pydantic import BaseModel
 
 from ..database import get_db
 from ..models.template import Template
+from ..models.user import User
+from ..auth import get_required_user
 
 router = APIRouter(prefix="/api/templates", tags=["templates"])
+
+
+class TemplateCreate(BaseModel):
+    """Schema for creating a template."""
+    name: str
+    content: str
+    category: str = "engagement"
+    platform: Optional[str] = None
+    hashtags: Optional[str] = None
+
+
+class TemplateUpdate(BaseModel):
+    """Schema for updating a template."""
+    name: Optional[str] = None
+    content: Optional[str] = None
+    category: Optional[str] = None
+    platform: Optional[str] = None
+    hashtags: Optional[str] = None
+    is_favorite: Optional[bool] = None
+
+
+def template_to_dict(template: Template) -> dict:
+    """Convert a Template model to a dictionary response."""
+    return {
+        "id": template.id,
+        "name": template.name,
+        "content": template.content,
+        "category": template.category,
+        "platform": template.platform,
+        "hashtags": template.hashtags,
+        "is_favorite": template.is_favorite,
+        "uses": template.use_count,
+        "created_at": template.created_at.isoformat(),
+    }
 
 
 @router.get("", response_model=List[dict])
 def get_templates(
     category: Optional[str] = None,
     favorites_only: bool = False,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_required_user),
 ):
-    """Get all templates with optional filtering"""
-    query = db.query(Template)
+    """Get all templates for the current user with optional filtering."""
+    query = db.query(Template).filter(Template.user_id == current_user.id)
 
     if category:
         query = query.filter(Template.category == category)
@@ -23,99 +64,84 @@ def get_templates(
         query = query.filter(Template.is_favorite == True)
 
     templates = query.order_by(Template.created_at.desc()).all()
-    return [
-        {
-            "id": t.id,
-            "name": t.name,
-            "content": t.content,
-            "category": t.category,
-            "platform": t.platform,
-            "hashtags": t.hashtags,
-            "is_favorite": t.is_favorite,
-            "uses": t.use_count,
-            "created_at": t.created_at.isoformat(),
-        }
-        for t in templates
-    ]
+    return [template_to_dict(t) for t in templates]
 
 
 @router.get("/{template_id}", response_model=dict)
-def get_template(template_id: int, db: Session = Depends(get_db)):
-    """Get a single template by ID"""
-    template = db.query(Template).filter(Template.id == template_id).first()
+def get_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+):
+    """Get a single template by ID (must belong to current user)."""
+    template = db.query(Template).filter(
+        Template.id == template_id,
+        Template.user_id == current_user.id
+    ).first()
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
-    return {
-        "id": template.id,
-        "name": template.name,
-        "content": template.content,
-        "category": template.category,
-        "platform": template.platform,
-        "hashtags": template.hashtags,
-        "is_favorite": template.is_favorite,
-        "uses": template.use_count,
-        "created_at": template.created_at.isoformat(),
-    }
+    return template_to_dict(template)
 
 
 @router.post("", response_model=dict)
-def create_template(template_data: dict, db: Session = Depends(get_db)):
-    """Create a new template"""
+def create_template(
+    template_data: TemplateCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+):
+    """Create a new template for the current user."""
     template = Template(
-        name=template_data.get("name", "Untitled Template"),
-        content=template_data.get("content", ""),
-        category=template_data.get("category", "engagement"),
-        platform=template_data.get("platform"),
-        hashtags=template_data.get("hashtags", ""),
+        user_id=current_user.id,
+        name=template_data.name,
+        content=template_data.content,
+        category=template_data.category,
+        platform=template_data.platform,
+        hashtags=template_data.hashtags,
     )
     db.add(template)
     db.commit()
     db.refresh(template)
 
-    return {
-        "id": template.id,
-        "name": template.name,
-        "content": template.content,
-        "category": template.category,
-        "platform": template.platform,
-        "hashtags": template.hashtags,
-        "is_favorite": template.is_favorite,
-        "uses": template.use_count,
-        "created_at": template.created_at.isoformat(),
-    }
+    return template_to_dict(template)
 
 
 @router.patch("/{template_id}", response_model=dict)
-def update_template(template_id: int, template_update: dict, db: Session = Depends(get_db)):
-    """Update a template"""
-    template = db.query(Template).filter(Template.id == template_id).first()
+def update_template(
+    template_id: int,
+    template_update: TemplateUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+):
+    """Update a template (must belong to current user)."""
+    template = db.query(Template).filter(
+        Template.id == template_id,
+        Template.user_id == current_user.id
+    ).first()
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
 
-    for key, value in template_update.items():
-        if value is not None and hasattr(template, key):
+    update_data = template_update.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        if value is not None:
             setattr(template, key, value)
 
     db.commit()
     db.refresh(template)
 
-    return {
-        "id": template.id,
-        "name": template.name,
-        "content": template.content,
-        "category": template.category,
-        "platform": template.platform,
-        "hashtags": template.hashtags,
-        "is_favorite": template.is_favorite,
-        "uses": template.use_count,
-        "created_at": template.created_at.isoformat(),
-    }
+    return template_to_dict(template)
 
 
 @router.delete("/{template_id}")
-def delete_template(template_id: int, db: Session = Depends(get_db)):
-    """Delete a template"""
-    template = db.query(Template).filter(Template.id == template_id).first()
+def delete_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+):
+    """Delete a template (must belong to current user)."""
+    template = db.query(Template).filter(
+        Template.id == template_id,
+        Template.user_id == current_user.id
+    ).first()
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
 
@@ -125,9 +151,16 @@ def delete_template(template_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{template_id}/favorite")
-def toggle_favorite(template_id: int, db: Session = Depends(get_db)):
-    """Toggle favorite status of a template"""
-    template = db.query(Template).filter(Template.id == template_id).first()
+def toggle_favorite(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+):
+    """Toggle favorite status of a template (must belong to current user)."""
+    template = db.query(Template).filter(
+        Template.id == template_id,
+        Template.user_id == current_user.id
+    ).first()
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
 
@@ -142,9 +175,16 @@ def toggle_favorite(template_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{template_id}/use")
-def use_template(template_id: int, db: Session = Depends(get_db)):
-    """Increment usage count when template is used"""
-    template = db.query(Template).filter(Template.id == template_id).first()
+def use_template(
+    template_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+):
+    """Increment usage count when template is used (must belong to current user)."""
+    template = db.query(Template).filter(
+        Template.id == template_id,
+        Template.user_id == current_user.id
+    ).first()
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
 
@@ -152,14 +192,4 @@ def use_template(template_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(template)
 
-    return {
-        "id": template.id,
-        "name": template.name,
-        "content": template.content,
-        "category": template.category,
-        "platform": template.platform,
-        "hashtags": template.hashtags,
-        "is_favorite": template.is_favorite,
-        "uses": template.use_count,
-        "created_at": template.created_at.isoformat(),
-    }
+    return template_to_dict(template)

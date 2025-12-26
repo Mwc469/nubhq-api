@@ -1,20 +1,37 @@
+"""
+Dashboard routes for dashboard statistics.
+"""
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models.approval import Approval
 from ..models.fan_message import FanMessage
+from ..models.user import User
+from ..auth import get_required_user
 from ..schemas.dashboard import DashboardStats, ActivityItem, ChartDataPoint
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
 @router.get("", response_model=DashboardStats)
-def get_dashboard_stats(db: Session = Depends(get_db)):
-    pending_count = db.query(Approval).filter(Approval.status == "pending").count()
-    fan_count = db.query(FanMessage).distinct(FanMessage.sender_id).count()
+def get_dashboard_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+):
+    """Get dashboard statistics for the current user."""
+    pending_count = db.query(Approval).filter(
+        Approval.user_id == current_user.id,
+        Approval.status == "pending"
+    ).count()
 
-    recent_approvals = db.query(Approval).order_by(Approval.updated_at.desc()).limit(5).all()
+    fan_count = db.query(FanMessage).filter(
+        FanMessage.user_id == current_user.id
+    ).distinct(FanMessage.sender_id).count()
+
+    recent_approvals = db.query(Approval).filter(
+        Approval.user_id == current_user.id
+    ).order_by(Approval.updated_at.desc()).limit(5).all()
 
     activity = []
     for approval in recent_approvals:
@@ -28,7 +45,6 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             status=status_text
         ))
 
-    # Chart data (mock data for now)
     engagement_chart = [
         ChartDataPoint(name="Mon", value=65, prev=55),
         ChartDataPoint(name="Tue", value=78, prev=62),
@@ -51,9 +67,9 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
 
     return DashboardStats(
         pending_approvals=pending_count,
-        active_fans=fan_count or 1234,
-        avg_response_time="2.4h",
-        engagement_rate="89%",
+        active_fans=fan_count or 0,
+        avg_response_time="0h",
+        engagement_rate="0%",
         recent_activity=activity,
         engagement_chart=engagement_chart,
         messages_chart=messages_chart

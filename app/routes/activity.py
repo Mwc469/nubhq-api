@@ -1,13 +1,39 @@
+"""
+Activity routes for activity log operations.
+"""
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from pydantic import BaseModel
 
 from ..database import get_db
 from ..models.activity import Activity
+from ..models.user import User
+from ..auth import get_required_user
 
 router = APIRouter(prefix="/api/activity", tags=["activity"])
+
+
+class ActivityCreate(BaseModel):
+    """Schema for creating an activity log entry."""
+    type: str = "other"
+    title: str
+    description: Optional[str] = None
+    metadata: Optional[dict] = None
+
+
+def activity_to_dict(activity: Activity) -> dict:
+    """Convert an Activity model to a dictionary response."""
+    return {
+        "id": activity.id,
+        "type": activity.activity_type,
+        "title": activity.title,
+        "description": activity.description,
+        "metadata": activity.extra_data,
+        "timestamp": activity.created_at.isoformat(),
+    }
 
 
 @router.get("", response_model=List[dict])
@@ -15,47 +41,39 @@ def get_activities(
     activity_type: Optional[str] = None,
     limit: int = Query(default=20, le=100),
     offset: int = 0,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_required_user),
 ):
-    """Get activity log with optional filtering and pagination"""
-    query = db.query(Activity)
+    """Get activity log for the current user with optional filtering and pagination."""
+    query = db.query(Activity).filter(Activity.user_id == current_user.id)
 
     if activity_type:
         query = query.filter(Activity.activity_type == activity_type)
 
     activities = query.order_by(Activity.created_at.desc()).offset(offset).limit(limit).all()
-
-    return [
-        {
-            "id": a.id,
-            "type": a.activity_type,
-            "title": a.title,
-            "description": a.description,
-            "metadata": a.extra_data,
-            "timestamp": a.created_at.isoformat(),
-        }
-        for a in activities
-    ]
+    return [activity_to_dict(a) for a in activities]
 
 
 @router.get("/stats")
-def get_activity_stats(db: Session = Depends(get_db)):
-    """Get activity statistics"""
-    total = db.query(func.count(Activity.id)).scalar() or 0
+def get_activity_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+):
+    """Get activity statistics for the current user."""
+    base_query = db.query(Activity).filter(Activity.user_id == current_user.id)
 
-    # Count by type
+    total = base_query.count()
+
     type_counts = db.query(
         Activity.activity_type,
         func.count(Activity.id)
+    ).filter(
+        Activity.user_id == current_user.id
     ).group_by(Activity.activity_type).all()
 
-    # Last 24 hours
-    day_ago = datetime.utcnow() - timedelta(days=1)
-    today_count = db.query(func.count(Activity.id)).filter(
-        Activity.created_at >= day_ago
-    ).scalar() or 0
+    day_ago = datetime.now(timezone.utc) - timedelta(days=1)
+    today_count = base_query.filter(Activity.created_at >= day_ago).count()
 
-    # Build stats from type counts
     stats = {
         "total_today": today_count,
         "approvals_pending": 0,
@@ -78,41 +96,35 @@ def get_activity_stats(db: Session = Depends(get_db)):
 
 
 @router.get("/recent")
-def get_recent_activity(limit: int = 5, db: Session = Depends(get_db)):
-    """Get recent activity for dashboard widget"""
-    activities = db.query(Activity).order_by(Activity.created_at.desc()).limit(limit).all()
+def get_recent_activity(
+    limit: int = 5,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+):
+    """Get recent activity for dashboard widget for the current user."""
+    activities = db.query(Activity).filter(
+        Activity.user_id == current_user.id
+    ).order_by(Activity.created_at.desc()).limit(limit).all()
 
-    return [
-        {
-            "id": a.id,
-            "type": a.activity_type,
-            "title": a.title,
-            "description": a.description,
-            "metadata": a.extra_data,
-            "timestamp": a.created_at.isoformat(),
-        }
-        for a in activities
-    ]
+    return [activity_to_dict(a) for a in activities]
 
 
 @router.post("", response_model=dict)
-def create_activity(activity_data: dict, db: Session = Depends(get_db)):
-    """Create a new activity log entry"""
+def create_activity(
+    activity_data: ActivityCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_required_user),
+):
+    """Create a new activity log entry for the current user."""
     activity = Activity(
-        activity_type=activity_data.get("type", "other"),
-        title=activity_data.get("title", ""),
-        description=activity_data.get("description"),
-        extra_data=activity_data.get("metadata"),
+        user_id=current_user.id,
+        activity_type=activity_data.type,
+        title=activity_data.title,
+        description=activity_data.description,
+        extra_data=activity_data.metadata,
     )
     db.add(activity)
     db.commit()
     db.refresh(activity)
 
-    return {
-        "id": activity.id,
-        "type": activity.activity_type,
-        "title": activity.title,
-        "description": activity.description,
-        "metadata": activity.metadata,
-        "timestamp": activity.created_at.isoformat(),
-    }
+    return activity_to_dict(activity)

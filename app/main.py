@@ -1,7 +1,15 @@
+"""
+NubHQ API - FastAPI application entry point.
+"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
+from .config import get_settings
 from .database import engine, Base
+from .middleware import SecurityHeadersMiddleware, RequestLoggingMiddleware
 from .routes import (
     approvals_router,
     dashboard_router,
@@ -19,22 +27,47 @@ from .routes import (
     media_router,
 )
 
-# Create tables
+settings = get_settings()
+
+# Create tables (in production, use Alembic migrations instead)
 Base.metadata.create_all(bind=engine)
+
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="NubHQ API",
     description="Backend API for NubHQ dashboard",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url="/api/docs" if settings.debug else None,
+    redoc_url="/api/redoc" if settings.debug else None,
 )
 
-# CORS
+# Add rate limiter to app state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Security headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Request logging middleware (only in debug mode)
+if settings.debug:
+    app.add_middleware(RequestLoggingMiddleware)
+
+# CORS - Properly configured with specific methods
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:3000", "https://web-pi-livid.vercel.app"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+    ],
+    max_age=3600,  # Cache preflight requests for 1 hour
 )
 
 # Routes
@@ -56,4 +89,18 @@ app.include_router(media_router)
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "healthy"}
+    """Health check endpoint for load balancers and monitoring."""
+    return {
+        "status": "healthy",
+        "environment": settings.environment,
+        "version": "1.0.0",
+    }
+
+
+@app.get("/")
+def root():
+    """Root endpoint redirects to API docs."""
+    return {
+        "message": "NubHQ API",
+        "docs": "/api/docs" if settings.debug else "Disabled in production",
+    }
