@@ -1,0 +1,77 @@
+# NubHQ API Docker Compose
+# Run with: docker-compose up -d
+
+version: '3.8'
+
+services:
+  # FastAPI Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nubhq-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=false
+      - DATABASE_URL=sqlite:///./data/nubhq.db
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      - ENVIRONMENT=production
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - ./data:/app/data
+      - ${VIDEO_INPUT:-/tmp/input}:/videos/input:ro
+      - ${VIDEO_OUTPUT:-/tmp/output}:/videos/output
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Redis for background job queue
+  redis:
+    image: redis:7-alpine
+    container_name: nubhq-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # RQ Worker for background jobs (optional, enable when ready)
+  # worker:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: nubhq-worker
+  #   command: python -m rq.cli worker --url redis://redis:6379/0 video-pipeline
+  #   environment:
+  #     - DATABASE_URL=sqlite:///./data/nubhq.db
+  #     - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+  #     - REDIS_URL=redis://redis:6379/0
+  #   volumes:
+  #     - ./data:/app/data
+  #     - ${VIDEO_INPUT:-/tmp/input}:/videos/input:ro
+  #     - ${VIDEO_OUTPUT:-/tmp/output}:/videos/output
+  #   depends_on:
+  #     - redis
+  #   restart: unless-stopped
+
+volumes:
+  redis-data:
+
+networks:
+  default:
+    name: nubhq-network

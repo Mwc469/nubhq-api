@@ -1,0 +1,65 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+ENV/
+env/
+.eggs/
+*.egg-info/
+*.egg
+
+# Tests
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Data files (mount as volumes instead)
+*.db
+*.sqlite
+data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Alembic versions (include for migrations)
+# alembic/versions/
+
+# Logs
+*.log
+logs/
+
+# Docker
+Dockerfile*
+docker-compose*
+.docker/
