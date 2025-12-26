@@ -4,7 +4,7 @@
 
 set -e
 
-BASE="${NUBHQ_WORKSPACE:-/Volumes/NUB_Workspace}"
+BASE="${NUBHQ_WORKSPACE:-/Volumes/Lil Hoss/NubHQ}"
 
 echo "Setting up NubHQ workspace at: $BASE"
 
@@ -24,40 +24,50 @@ if [ ! -d "$BASE" ]; then
     fi
 fi
 
-# Create folder structure
+# Create folder structure matching existing NubHQ layout
 echo "Creating folders..."
 
-mkdir -p "$BASE/input"
-mkdir -p "$BASE/processing"
-mkdir -p "$BASE/output/auto-queued"
-mkdir -p "$BASE/output/review"
-mkdir -p "$BASE/output/library"
-mkdir -p "$BASE/output/failed"
-mkdir -p "$BASE/output/thumbnails"
-mkdir -p "$BASE/output/captions"
-mkdir -p "$BASE/output/watermarked"
-mkdir -p "$BASE/output/templates"
-mkdir -p "$BASE/archive"
-mkdir -p "$BASE/.nubhq"
+# Working drive (Lil Hoss)
+mkdir -p "$BASE/01_Inbox_ToSort"
+mkdir -p "$BASE/01_Inbox_ToSort/processing"
+mkdir -p "$BASE/02_Library"
+mkdir -p "$BASE/03_Exports"
+mkdir -p "$BASE/03_Exports/auto-queued"
+mkdir -p "$BASE/03_Exports/review"
+mkdir -p "$BASE/03_Exports/thumbnails"
+mkdir -p "$BASE/03_Exports/captions"
+mkdir -p "$BASE/04_Archive"
+mkdir -p "$BASE/05_Metadata"
+mkdir -p "$BASE/database"
+mkdir -p "$BASE/logs"
+mkdir -p "$BASE/temp"
+mkdir -p "$BASE/cache"
 
-# Set permissions
-chmod 755 "$BASE/input"
-chmod 755 "$BASE/output"
+# Archive drive (Big Hoss) - if available
+ARCHIVE_BASE="/Volumes/Big Hoss/NubHQ"
+if [ -d "/Volumes/Big Hoss" ]; then
+    mkdir -p "$ARCHIVE_BASE/04_Archive"
+    echo "Archive drive (Big Hoss) configured"
+fi
 
 echo ""
 echo "Workspace ready!"
 echo ""
-echo "Folder structure:"
-echo "  $BASE/"
-echo "  ├── input/           <- Drop videos here"
-echo "  ├── processing/      <- Videos being processed"
-echo "  ├── output/"
-echo "  │   ├── auto-queued/ <- High-confidence outputs"
-echo "  │   ├── review/      <- Needs manual review"
-echo "  │   ├── library/     <- Final approved videos"
-echo "  │   └── failed/      <- Failed processing"
-echo "  ├── archive/         <- Original files"
-echo "  └── .nubhq/          <- System data"
+echo "Two-drive setup:"
+echo ""
+echo "  Lil Hoss (Working Drive):"
+echo "  └── NubHQ/"
+echo "      ├── 01_Inbox_ToSort/  <- Drop videos here"
+echo "      ├── 02_Library/       <- Approved videos"
+echo "      ├── 03_Exports/       <- Processed outputs"
+echo "      ├── 04_Archive/       <- Local archive"
+echo "      ├── 05_Metadata/      <- Video metadata"
+echo "      ├── database/         <- Learning DB"
+echo "      └── logs/             <- Processing logs"
+echo ""
+echo "  Big Hoss (Archive Drive):"
+echo "  └── NubHQ/"
+echo "      └── 04_Archive/       <- Long-term archive"
 echo ""
 echo "To start processing, drop .mp4/.mov files into:"
-echo "  $BASE/input"
+echo "  $BASE/01_Inbox_ToSort"

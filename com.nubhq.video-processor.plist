@@ -18,13 +18,13 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>NUBHQ_INPUT</key>
-        <string>/Volumes/NUB_Workspace/input</string>
+        <string>/Volumes/Lil Hoss/NubHQ/01_Inbox_ToSort</string>
         <key>NUBHQ_OUTPUT</key>
-        <string>/Volumes/NUB_Workspace/output</string>
+        <string>/Volumes/Lil Hoss/NubHQ/03_Exports</string>
         <key>NUBHQ_ARCHIVE</key>
-        <string>/Volumes/NUB_Workspace/archive</string>
+        <string>/Volumes/Big Hoss/NubHQ/04_Archive</string>
         <key>NUBHQ_DATA</key>
-        <string>/Volumes/NUB_Workspace/.nubhq</string>
+        <string>/Volumes/Lil Hoss/NubHQ/database</string>
         <key>NUBHQ_QUICK_MODE</key>
         <string>youtube</string>
     </dict>
@@ -36,7 +36,7 @@
     <dict>
         <key>PathState</key>
         <dict>
-            <key>/Volumes/NUB_Workspace</key>
+            <key>/Volumes/Lil Hoss</key>
             <true/>
         </dict>
     </dict>
@@ -45,8 +45,8 @@
     <integer>10</integer>
 
     <key>StandardOutPath</key>
-    <string>/Volumes/NUB_Workspace/.nubhq/processor.log</string>
+    <string>/Volumes/Lil Hoss/NubHQ/logs/processor.log</string>
     <key>StandardErrorPath</key>
-    <string>/Volumes/NUB_Workspace/.nubhq/processor-error.log</string>
+    <string>/Volumes/Lil Hoss/NubHQ/logs/processor-error.log</string>
 </dict>
 </plist>
