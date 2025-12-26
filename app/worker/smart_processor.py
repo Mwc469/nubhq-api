@@ -798,9 +798,9 @@ class SmartVideoProcessor:
         if audio_norm in lufs_map:
             filters.append(f"loudnorm=I={lufs_map[audio_norm]}:TP=-1.5:LRA=11")
 
-        # Noise reduction
+        # Noise reduction (afftdn nf range: -80 to -20)
         noise = decisions.get('NOISE_REDUCTION', 'none')
-        noise_map = {'light': 15, 'medium': 25, 'aggressive': 35}
+        noise_map = {'light': 25, 'medium': 35, 'aggressive': 50}
         if noise in noise_map:
             filters.append(f"afftdn=nf=-{noise_map[noise]}")
 
