@@ -27,6 +27,7 @@ from .routes import (
     media_router,
     video_pipeline_router,
     webhooks_router,
+    video_tools_router,
 )
 
 settings = get_settings()
@@ -86,6 +87,7 @@ app.include_router(email_campaigns_router)
 app.include_router(media_router)
 app.include_router(video_pipeline_router)
 app.include_router(webhooks_router)
+app.include_router(video_tools_router)
 
 
 @app.get("/api/health")
