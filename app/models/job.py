@@ -14,6 +14,8 @@ class Job(Base):
     type = Column(String(50), nullable=False, index=True)  # batch, export, caption, thumbnail, watermark
     status = Column(String(20), default="pending", index=True)  # pending, processing, completed, failed
     progress = Column(Integer, default=0)  # 0-100
+    priority = Column(Integer, default=0, index=True)  # 0=normal, 1=high, 2=urgent
+    batch_id = Column(String(50), nullable=True, index=True)  # Group related jobs
     input_data = Column(JSON, nullable=True)  # Request parameters
     output_data = Column(JSON, nullable=True)  # Results
     error_message = Column(Text, nullable=True)
@@ -30,6 +32,8 @@ class Job(Base):
             "type": self.type,
             "status": self.status,
             "progress": self.progress,
+            "priority": self.priority,
+            "batch_id": self.batch_id,
             "input_data": self.input_data,
             "output_data": self.output_data,
             "error_message": self.error_message,

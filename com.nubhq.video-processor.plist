@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nubhq.video-processor</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/mattcolvin/nubhq/api/venv/bin/python</string>
+        <string>-m</string>
+        <string>app.worker.intelligent_processor</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/mattcolvin/nubhq/api</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NUBHQ_INPUT</key>
+        <string>/Volumes/NUB_Workspace/input</string>
+        <key>NUBHQ_OUTPUT</key>
+        <string>/Volumes/NUB_Workspace/output</string>
+        <key>NUBHQ_ARCHIVE</key>
+        <string>/Volumes/NUB_Workspace/archive</string>
+        <key>NUBHQ_DATA</key>
+        <string>/Volumes/NUB_Workspace/.nubhq</string>
+        <key>NUBHQ_QUICK_MODE</key>
+        <string>youtube</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>PathState</key>
+        <dict>
+            <key>/Volumes/NUB_Workspace</key>
+            <true/>
+        </dict>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Volumes/NUB_Workspace/.nubhq/processor.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Volumes/NUB_Workspace/.nubhq/processor-error.log</string>
+</dict>
+</plist>
