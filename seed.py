@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from app.database import SessionLocal, engine, Base
-from app.models import Approval, FanMessage, UserSettings, ScheduledPost
+from app.models import Approval, FanMessage, UserSettings, ScheduledPost, TrainingExample
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -12,6 +12,7 @@ db.query(Approval).delete()
 db.query(FanMessage).delete()
 db.query(UserSettings).delete()
 db.query(ScheduledPost).delete()
+db.query(TrainingExample).delete()
 
 # Sample approvals
 approvals = [
@@ -116,6 +117,50 @@ scheduled_posts = [
     ),
 ]
 
+# Sample training examples
+training_examples = [
+    TrainingExample(
+        category="greeting",
+        input_message="Hey! Just subscribed!",
+        response="Welcome to the family! So glad to have you here. You're going to love it!"
+    ),
+    TrainingExample(
+        category="greeting",
+        input_message="Hi, I'm new here",
+        response="Hey there! Welcome! Feel free to ask me anything. I'm excited to connect with you!"
+    ),
+    TrainingExample(
+        category="thanks",
+        input_message="Thanks for the amazing content!",
+        response="Aww thank you so much! Comments like this keep me going. You're the best!"
+    ),
+    TrainingExample(
+        category="thanks",
+        input_message="Just wanted to say I appreciate you",
+        response="This means the world to me! Thank you for being such an amazing supporter!"
+    ),
+    TrainingExample(
+        category="question",
+        input_message="When do you usually post?",
+        response="I try to post new content 3-4 times a week, usually in the evenings. Stay tuned!"
+    ),
+    TrainingExample(
+        category="question",
+        input_message="Do you do custom content?",
+        response="Yes! DM me with what you have in mind and we can discuss the details."
+    ),
+    TrainingExample(
+        category="promo",
+        input_message="Any deals coming up?",
+        response="Keep an eye out this weekend! I might have something special for my loyal fans."
+    ),
+    TrainingExample(
+        category="compliment",
+        input_message="You're so beautiful!",
+        response="You're too sweet! Thank you for making me smile today!"
+    ),
+]
+
 # Default settings
 settings = UserSettings(
     user_id="default",
@@ -127,6 +172,7 @@ settings = UserSettings(
 db.add_all(approvals)
 db.add_all(fan_messages)
 db.add_all(scheduled_posts)
+db.add_all(training_examples)
 db.add(settings)
 db.commit()
 
@@ -134,6 +180,7 @@ print("Database seeded successfully!")
 print(f"  - {len(approvals)} approvals")
 print(f"  - {len(fan_messages)} fan messages")
 print(f"  - {len(scheduled_posts)} scheduled posts")
+print(f"  - {len(training_examples)} training examples")
 print(f"  - Default settings created")
 
 db.close()
