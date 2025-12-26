@@ -1,96 +1,13 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List, Optional
 from datetime import datetime, timedelta
 
 from ..database import get_db
+from ..models.activity import Activity
 
 router = APIRouter(prefix="/api/activity", tags=["activity"])
-
-
-# Mock activity data
-mock_activities = [
-    {
-        "id": 1,
-        "type": "approval",
-        "action": "Message approved",
-        "description": "Reply to @superfan123 approved and sent",
-        "actor": "You",
-        "actor_type": "user",
-        "status": "completed",
-        "timestamp": (datetime.utcnow() - timedelta(minutes=2)).isoformat(),
-    },
-    {
-        "id": 2,
-        "type": "ai",
-        "action": "AI generated response",
-        "description": "Created reply for message from @newbie_fan",
-        "actor": "Nub AI",
-        "actor_type": "ai",
-        "status": "pending",
-        "timestamp": (datetime.utcnow() - timedelta(minutes=15)).isoformat(),
-    },
-    {
-        "id": 3,
-        "type": "post",
-        "action": "Post scheduled",
-        "description": "Instagram post scheduled for tomorrow at 2:00 PM",
-        "actor": "You",
-        "actor_type": "user",
-        "status": "scheduled",
-        "timestamp": (datetime.utcnow() - timedelta(hours=1)).isoformat(),
-    },
-    {
-        "id": 4,
-        "type": "message",
-        "action": "New fan message",
-        "description": "Received message from @loyal_supporter",
-        "actor": "System",
-        "actor_type": "system",
-        "status": "completed",
-        "timestamp": (datetime.utcnow() - timedelta(hours=2)).isoformat(),
-    },
-    {
-        "id": 5,
-        "type": "approval",
-        "action": "Message rejected",
-        "description": "Reply to @spam_user rejected",
-        "actor": "You",
-        "actor_type": "user",
-        "status": "rejected",
-        "timestamp": (datetime.utcnow() - timedelta(hours=3)).isoformat(),
-    },
-    {
-        "id": 6,
-        "type": "ai",
-        "action": "AI training updated",
-        "description": "Voice profile updated with 5 new samples",
-        "actor": "Nub AI",
-        "actor_type": "ai",
-        "status": "completed",
-        "timestamp": (datetime.utcnow() - timedelta(hours=5)).isoformat(),
-    },
-    {
-        "id": 7,
-        "type": "post",
-        "action": "Post published",
-        "description": 'Twitter post "Behind the scenes 📸" went live',
-        "actor": "System",
-        "actor_type": "system",
-        "status": "completed",
-        "timestamp": (datetime.utcnow() - timedelta(days=1)).isoformat(),
-    },
-    {
-        "id": 8,
-        "type": "system",
-        "action": "System backup",
-        "description": "Daily backup completed successfully",
-        "actor": "System",
-        "actor_type": "system",
-        "status": "completed",
-        "timestamp": (datetime.utcnow() - timedelta(days=1)).isoformat(),
-    },
-]
 
 
 @router.get("", response_model=List[dict])
@@ -100,31 +17,102 @@ def get_activities(
     offset: int = 0,
     db: Session = Depends(get_db)
 ):
-    """Get activity log with optional filtering"""
-    activities = mock_activities
+    """Get activity log with optional filtering and pagination"""
+    query = db.query(Activity)
 
     if activity_type:
-        activities = [a for a in activities if a["type"] == activity_type]
+        query = query.filter(Activity.activity_type == activity_type)
 
-    return activities[offset:offset + limit]
+    activities = query.order_by(Activity.created_at.desc()).offset(offset).limit(limit).all()
+
+    return [
+        {
+            "id": a.id,
+            "type": a.activity_type,
+            "title": a.title,
+            "description": a.description,
+            "metadata": a.extra_data,
+            "timestamp": a.created_at.isoformat(),
+        }
+        for a in activities
+    ]
 
 
 @router.get("/stats")
 def get_activity_stats(db: Session = Depends(get_db)):
     """Get activity statistics"""
-    return {
-        "total_today": 12,
-        "approvals_pending": 3,
-        "ai_actions": 8,
-        "posts_scheduled": 5,
-        "messages_received": 24,
+    total = db.query(func.count(Activity.id)).scalar() or 0
+
+    # Count by type
+    type_counts = db.query(
+        Activity.activity_type,
+        func.count(Activity.id)
+    ).group_by(Activity.activity_type).all()
+
+    # Last 24 hours
+    day_ago = datetime.utcnow() - timedelta(days=1)
+    today_count = db.query(func.count(Activity.id)).filter(
+        Activity.created_at >= day_ago
+    ).scalar() or 0
+
+    # Build stats from type counts
+    stats = {
+        "total_today": today_count,
+        "approvals_pending": 0,
+        "ai_actions": 0,
+        "posts_scheduled": 0,
+        "messages_received": 0,
     }
+
+    for activity_type, count in type_counts:
+        if activity_type == "approval":
+            stats["approvals_pending"] = count
+        elif activity_type == "ai":
+            stats["ai_actions"] = count
+        elif activity_type == "post":
+            stats["posts_scheduled"] = count
+        elif activity_type == "message":
+            stats["messages_received"] = count
+
+    return stats
 
 
 @router.get("/recent")
-def get_recent_activity(
-    limit: int = 5,
-    db: Session = Depends(get_db)
-):
-    """Get most recent activities for dashboard"""
-    return mock_activities[:limit]
+def get_recent_activity(limit: int = 5, db: Session = Depends(get_db)):
+    """Get recent activity for dashboard widget"""
+    activities = db.query(Activity).order_by(Activity.created_at.desc()).limit(limit).all()
+
+    return [
+        {
+            "id": a.id,
+            "type": a.activity_type,
+            "title": a.title,
+            "description": a.description,
+            "metadata": a.extra_data,
+            "timestamp": a.created_at.isoformat(),
+        }
+        for a in activities
+    ]
+
+
+@router.post("", response_model=dict)
+def create_activity(activity_data: dict, db: Session = Depends(get_db)):
+    """Create a new activity log entry"""
+    activity = Activity(
+        activity_type=activity_data.get("type", "other"),
+        title=activity_data.get("title", ""),
+        description=activity_data.get("description"),
+        extra_data=activity_data.get("metadata"),
+    )
+    db.add(activity)
+    db.commit()
+    db.refresh(activity)
+
+    return {
+        "id": activity.id,
+        "type": activity.activity_type,
+        "title": activity.title,
+        "description": activity.description,
+        "metadata": activity.metadata,
+        "timestamp": activity.created_at.isoformat(),
+    }

@@ -4,53 +4,9 @@ from typing import List, Optional
 from datetime import datetime
 
 from ..database import get_db
-from ..schemas.posts import PostCreate, PostUpdate, PostResponse
+from ..models.post import Post
 
 router = APIRouter(prefix="/api/posts", tags=["posts"])
-
-
-# Mock data for now - will be replaced with DB models
-mock_posts = [
-    {
-        "id": 1,
-        "content": "Behind the scenes 📸 #content #creator",
-        "platform": "instagram",
-        "post_type": "image",
-        "status": "published",
-        "scheduled_at": None,
-        "published_at": "2024-01-15T14:00:00Z",
-        "hashtags": ["content", "creator"],
-        "media_urls": ["https://picsum.photos/400/400?random=1"],
-        "engagement": {"likes": 1234, "comments": 56, "shares": 23},
-        "created_at": "2024-01-15T10:00:00Z",
-    },
-    {
-        "id": 2,
-        "content": "New content dropping soon! 🔥",
-        "platform": "twitter",
-        "post_type": "text",
-        "status": "scheduled",
-        "scheduled_at": "2024-01-20T18:00:00Z",
-        "published_at": None,
-        "hashtags": [],
-        "media_urls": [],
-        "engagement": None,
-        "created_at": "2024-01-14T12:00:00Z",
-    },
-    {
-        "id": 3,
-        "content": "Thank you all for 10K! 🎉",
-        "platform": "instagram",
-        "post_type": "reel",
-        "status": "draft",
-        "scheduled_at": None,
-        "published_at": None,
-        "hashtags": ["milestone", "thankyou"],
-        "media_urls": [],
-        "engagement": None,
-        "created_at": "2024-01-13T09:00:00Z",
-    },
-]
 
 
 @router.get("", response_model=List[dict])
@@ -60,74 +16,155 @@ def get_posts(
     db: Session = Depends(get_db)
 ):
     """Get all posts with optional filtering"""
-    posts = mock_posts
+    query = db.query(Post)
 
     if status:
-        posts = [p for p in posts if p["status"] == status]
+        query = query.filter(Post.status == status)
     if platform:
-        posts = [p for p in posts if p["platform"] == platform]
+        query = query.filter(Post.platform == platform)
 
-    return posts
+    posts = query.order_by(Post.created_at.desc()).all()
+    return [
+        {
+            "id": p.id,
+            "content": p.content,
+            "platform": p.platform,
+            "post_type": p.post_type,
+            "status": p.status,
+            "scheduled_at": p.scheduled_at.isoformat() if p.scheduled_at else None,
+            "published_at": p.published_at.isoformat() if p.published_at else None,
+            "hashtags": p.hashtags or [],
+            "media_urls": p.media_urls or [],
+            "engagement": p.engagement,
+            "created_at": p.created_at.isoformat(),
+        }
+        for p in posts
+    ]
 
 
 @router.get("/{post_id}", response_model=dict)
 def get_post(post_id: int, db: Session = Depends(get_db)):
     """Get a single post by ID"""
-    post = next((p for p in mock_posts if p["id"] == post_id), None)
+    post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
-    return post
+    return {
+        "id": post.id,
+        "content": post.content,
+        "platform": post.platform,
+        "post_type": post.post_type,
+        "status": post.status,
+        "scheduled_at": post.scheduled_at.isoformat() if post.scheduled_at else None,
+        "published_at": post.published_at.isoformat() if post.published_at else None,
+        "hashtags": post.hashtags or [],
+        "media_urls": post.media_urls or [],
+        "engagement": post.engagement,
+        "created_at": post.created_at.isoformat(),
+    }
 
 
 @router.post("", response_model=dict)
-def create_post(post: dict, db: Session = Depends(get_db)):
+def create_post(post_data: dict, db: Session = Depends(get_db)):
     """Create a new post"""
-    new_post = {
-        "id": len(mock_posts) + 1,
-        **post,
-        "status": post.get("scheduled_at") and "scheduled" or "draft",
-        "created_at": datetime.utcnow().isoformat(),
-        "engagement": None,
+    scheduled_at = post_data.get("scheduled_at")
+    if scheduled_at and isinstance(scheduled_at, str):
+        scheduled_at = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+
+    post = Post(
+        content=post_data.get("content", ""),
+        platform=post_data.get("platform", "instagram"),
+        post_type=post_data.get("post_type", "image"),
+        hashtags=post_data.get("hashtags", []),
+        media_urls=post_data.get("media_urls", []),
+        status="scheduled" if scheduled_at else "draft",
+        scheduled_at=scheduled_at,
+    )
+    db.add(post)
+    db.commit()
+    db.refresh(post)
+
+    return {
+        "id": post.id,
+        "content": post.content,
+        "platform": post.platform,
+        "post_type": post.post_type,
+        "status": post.status,
+        "scheduled_at": post.scheduled_at.isoformat() if post.scheduled_at else None,
+        "published_at": post.published_at.isoformat() if post.published_at else None,
+        "hashtags": post.hashtags or [],
+        "media_urls": post.media_urls or [],
+        "engagement": post.engagement,
+        "created_at": post.created_at.isoformat(),
     }
-    mock_posts.append(new_post)
-    return new_post
 
 
 @router.patch("/{post_id}", response_model=dict)
 def update_post(post_id: int, post_update: dict, db: Session = Depends(get_db)):
     """Update a post"""
-    post = next((p for p in mock_posts if p["id"] == post_id), None)
+    post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
 
     for key, value in post_update.items():
-        if value is not None:
-            post[key] = value
+        if value is not None and hasattr(post, key):
+            if key == "scheduled_at" and isinstance(value, str):
+                value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            setattr(post, key, value)
 
-    return post
+    db.commit()
+    db.refresh(post)
+
+    return {
+        "id": post.id,
+        "content": post.content,
+        "platform": post.platform,
+        "post_type": post.post_type,
+        "status": post.status,
+        "scheduled_at": post.scheduled_at.isoformat() if post.scheduled_at else None,
+        "published_at": post.published_at.isoformat() if post.published_at else None,
+        "hashtags": post.hashtags or [],
+        "media_urls": post.media_urls or [],
+        "engagement": post.engagement,
+        "created_at": post.created_at.isoformat(),
+    }
 
 
 @router.delete("/{post_id}")
 def delete_post(post_id: int, db: Session = Depends(get_db)):
     """Delete a post"""
-    global mock_posts
-    post = next((p for p in mock_posts if p["id"] == post_id), None)
+    post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    mock_posts = [p for p in mock_posts if p["id"] != post_id]
+    db.delete(post)
+    db.commit()
     return {"message": "Post deleted"}
 
 
 @router.post("/{post_id}/publish")
 def publish_post(post_id: int, db: Session = Depends(get_db)):
     """Publish a draft or scheduled post immediately"""
-    post = next((p for p in mock_posts if p["id"] == post_id), None)
+    post = db.query(Post).filter(Post.id == post_id).first()
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    post["status"] = "published"
-    post["published_at"] = datetime.utcnow().isoformat()
-    post["scheduled_at"] = None
+    post.status = "published"
+    post.published_at = datetime.utcnow()
+    post.scheduled_at = None
 
-    return post
+    db.commit()
+    db.refresh(post)
+
+    return {
+        "id": post.id,
+        "content": post.content,
+        "platform": post.platform,
+        "post_type": post.post_type,
+        "status": post.status,
+        "scheduled_at": post.scheduled_at.isoformat() if post.scheduled_at else None,
+        "published_at": post.published_at.isoformat() if post.published_at else None,
+        "hashtags": post.hashtags or [],
+        "media_urls": post.media_urls or [],
+        "engagement": post.engagement,
+        "created_at": post.created_at.isoformat(),
+    }
