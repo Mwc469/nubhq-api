@@ -28,3 +28,4 @@ class User(Base):
     training_examples = relationship("TrainingExample", back_populates="user", cascade="all, delete-orphan")
     settings = relationship("UserSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
     fan_messages = relationship("FanMessage", back_populates="user", cascade="all, delete-orphan")
+    scheduled_posts = relationship("ScheduledPost", back_populates="user", cascade="all, delete-orphan")
