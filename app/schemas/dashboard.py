@@ -15,9 +15,17 @@ class ActivityItem(BaseModel):
     status: str
 
 
+class ChartDataPoint(BaseModel):
+    name: str
+    value: int
+    prev: Optional[int] = None
+
+
 class DashboardStats(BaseModel):
     pending_approvals: int
     active_fans: int
     avg_response_time: str
     engagement_rate: str
     recent_activity: List[ActivityItem]
+    engagement_chart: List[ChartDataPoint]
+    messages_chart: List[ChartDataPoint]

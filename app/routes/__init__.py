@@ -5,5 +5,6 @@ from .settings import router as settings_router
 from .calendar import router as calendar_router
 from .ai_trainer import router as ai_trainer_router
 from .auth import router as auth_router
+from .search import router as search_router
 
-__all__ = ["approvals_router", "dashboard_router", "fan_mail_router", "settings_router", "calendar_router", "ai_trainer_router", "auth_router"]
+__all__ = ["approvals_router", "dashboard_router", "fan_mail_router", "settings_router", "calendar_router", "ai_trainer_router", "auth_router", "search_router"]

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models.approval import Approval
 from ..models.fan_message import FanMessage
-from ..schemas.dashboard import DashboardStats, ActivityItem
+from ..schemas.dashboard import DashboardStats, ActivityItem, ChartDataPoint
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -28,10 +28,33 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
             status=status_text
         ))
 
+    # Chart data (mock data for now)
+    engagement_chart = [
+        ChartDataPoint(name="Mon", value=65, prev=55),
+        ChartDataPoint(name="Tue", value=78, prev=62),
+        ChartDataPoint(name="Wed", value=82, prev=71),
+        ChartDataPoint(name="Thu", value=74, prev=68),
+        ChartDataPoint(name="Fri", value=91, prev=75),
+        ChartDataPoint(name="Sat", value=88, prev=82),
+        ChartDataPoint(name="Sun", value=95, prev=78),
+    ]
+
+    messages_chart = [
+        ChartDataPoint(name="Mon", value=24),
+        ChartDataPoint(name="Tue", value=31),
+        ChartDataPoint(name="Wed", value=28),
+        ChartDataPoint(name="Thu", value=45),
+        ChartDataPoint(name="Fri", value=52),
+        ChartDataPoint(name="Sat", value=38),
+        ChartDataPoint(name="Sun", value=41),
+    ]
+
     return DashboardStats(
         pending_approvals=pending_count,
         active_fans=fan_count or 1234,
         avg_response_time="2.4h",
         engagement_rate="89%",
-        recent_activity=activity
+        recent_activity=activity,
+        engagement_chart=engagement_chart,
+        messages_chart=messages_chart
     )
