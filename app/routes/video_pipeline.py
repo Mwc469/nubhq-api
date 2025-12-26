@@ -647,7 +647,7 @@ async def get_custom_template(template_id: str):
 
 import subprocess
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Activity log storage (in-memory, would use DB in production)
 _activity_log: List[dict] = []
@@ -1123,12 +1123,29 @@ def _format_timestamp_vtt(seconds: float) -> str:
 from fastapi.responses import StreamingResponse
 import asyncio
 
-# Job progress storage
+# Job progress cache (for real-time SSE streaming)
 _job_progress: Dict[str, dict] = {}
 
 
-def update_job_progress(job_id: str, progress: int, status: str, message: str = ""):
-    """Update progress for a job"""
+def create_job(db: Session, job_id: str, job_type: str, user_id: int = None, input_data: dict = None):
+    """Create a new job in the database"""
+    job = Job(
+        id=job_id,
+        user_id=user_id,
+        type=job_type,
+        status="pending",
+        progress=0,
+        input_data=input_data,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+def update_job_progress(job_id: str, progress: int, status: str, message: str = "", db: Session = None):
+    """Update progress for a job (cache + database)"""
+    # Update in-memory cache for real-time SSE
     _job_progress[job_id] = {
         "job_id": job_id,
         "progress": progress,
@@ -1137,13 +1154,31 @@ def update_job_progress(job_id: str, progress: int, status: str, message: str = 
         "updated_at": datetime.now().isoformat()
     }
 
+    # Persist to database if session provided
+    if db:
+        job = db.query(Job).filter(Job.id == job_id).first()
+        if job:
+            job.progress = progress
+            job.status = status
+            job.error_message = message if status == "failed" else job.error_message
+            if status in ["completed", "failed"]:
+                job.completed_at = datetime.now(timezone.utc)
+            db.commit()
+
 
 @router.get("/progress/{job_id}")
-async def get_job_progress(job_id: str):
-    """Get current progress for a job"""
-    if job_id not in _job_progress:
-        return {"job_id": job_id, "progress": 0, "status": "unknown", "message": "Job not found"}
-    return _job_progress[job_id]
+async def get_job_progress(job_id: str, db: Session = Depends(get_db)):
+    """Get current progress for a job (checks cache first, then database)"""
+    # Check in-memory cache first for real-time data
+    if job_id in _job_progress:
+        return _job_progress[job_id]
+
+    # Fall back to database for persisted jobs
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if job:
+        return job.to_dict()
+
+    return {"job_id": job_id, "progress": 0, "status": "unknown", "message": "Job not found"}
 
 
 @router.get("/progress/{job_id}/stream")
@@ -1184,18 +1219,66 @@ async def stream_job_progress(job_id: str):
 
 
 @router.get("/jobs")
-async def list_jobs():
-    """List all tracked jobs"""
+async def list_jobs(
+    status: Optional[str] = None,
+    job_type: Optional[str] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """List all tracked jobs from database"""
+    query = db.query(Job).order_by(Job.created_at.desc())
+
+    if status:
+        query = query.filter(Job.status == status)
+    if job_type:
+        query = query.filter(Job.type == job_type)
+
+    jobs = query.limit(limit).all()
+
     return {
-        "jobs": list(_job_progress.values()),
-        "total": len(_job_progress)
+        "jobs": [job.to_dict() for job in jobs],
+        "total": len(jobs),
+        "active_in_memory": len(_job_progress)
     }
 
 
 @router.delete("/jobs/{job_id}")
-async def delete_job(job_id: str):
-    """Remove a job from tracking"""
+async def delete_job(job_id: str, db: Session = Depends(get_db)):
+    """Remove a job from tracking (cache and database)"""
+    # Remove from cache
     if job_id in _job_progress:
         del _job_progress[job_id]
+
+    # Remove from database
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if job:
+        db.delete(job)
+        db.commit()
         return {"status": "ok", "message": f"Job {job_id} removed"}
+
     raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+
+@router.post("/jobs/test")
+async def create_test_job(db: Session = Depends(get_db)):
+    """Create a test job to verify persistence"""
+    import uuid
+    job_id = f"test-{uuid.uuid4().hex[:8]}"
+
+    job = create_job(
+        db=db,
+        job_id=job_id,
+        job_type="test",
+        input_data={"test": True, "created_via": "test endpoint"}
+    )
+
+    # Simulate progress updates
+    update_job_progress(job_id, 25, "processing", "Starting...", db)
+    update_job_progress(job_id, 50, "processing", "Halfway...", db)
+    update_job_progress(job_id, 100, "completed", "Done!", db)
+
+    return {
+        "status": "ok",
+        "message": "Test job created and completed",
+        "job": job.to_dict()
+    }
