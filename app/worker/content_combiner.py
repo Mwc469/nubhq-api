@@ -59,9 +59,12 @@ class CombinerConfig:
 
     @classmethod
     def ensure_dirs(cls):
-        """Create output directories"""
+        """Create output directories (fails silently if permissions denied)"""
         for d in [cls.HIGHLIGHTS_DIR, cls.MULTICAM_DIR, cls.COMPILED_DIR, cls.TEMPLATES_DIR]:
-            d.mkdir(parents=True, exist_ok=True)
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                logging.warning(f"Cannot create directory {d} - permission denied")
 
 
 # ============================================================

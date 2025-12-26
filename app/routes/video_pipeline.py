@@ -27,7 +27,7 @@ except ImportError as e:
     logging.warning(f"Worker modules not available: {e}")
     HAS_WORKERS = False
 
-router = APIRouter(prefix="/video-pipeline", tags=["video-pipeline"])
+router = APIRouter(prefix="/api/video-pipeline", tags=["video-pipeline"])
 
 
 # ============================================================

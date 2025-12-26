@@ -81,11 +81,14 @@ class Config:
 
     @classmethod
     def ensure_dirs(cls):
-        """Create all required directories"""
+        """Create all required directories (fails silently if permissions denied)"""
         for d in [cls.INPUT_DIR, cls.PROCESSING_DIR, cls.OUTPUT_DIR,
                   cls.ARCHIVE_DIR, cls.DATA_DIR, cls.AUTO_QUEUED_DIR,
                   cls.REVIEW_DIR, cls.LIBRARY_DIR]:
-            d.mkdir(parents=True, exist_ok=True)
+            try:
+                d.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                logging.warning(f"Cannot create directory {d} - permission denied")
 
 
 # ============================================================
@@ -399,8 +402,14 @@ class PreferenceLearner:
     
     def _init_db(self):
         """Initialize SQLite database"""
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        
+        try:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            logging.warning(f"Cannot create directory {self.db_path.parent} - permission denied")
+            self._db_available = False
+            return
+
+        self._db_available = True
         with sqlite3.connect(self.db_path) as conn:
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS decisions (
@@ -542,6 +551,9 @@ class PreferenceLearner:
     
     def get_stats(self) -> Dict:
         """Get learning statistics"""
+        if not getattr(self, '_db_available', True):
+            return {'total_decisions': 0, 'preferences': {}}
+
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute('SELECT COUNT(*) FROM decisions')
             total_decisions = cursor.fetchone()[0]
@@ -646,6 +658,9 @@ class PreferenceLearner:
 
     def get_approval_stats(self) -> Dict:
         """Get approval feedback statistics"""
+        if not getattr(self, '_db_available', True):
+            return {'total_feedback': 0, 'approved': 0, 'rejected': 0, 'approval_rate': 0, 'avg_engagement_score': 0}
+
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.execute('''
