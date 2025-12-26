@@ -1402,22 +1402,29 @@ async def list_jobs(
     }
 
 
-@router.delete("/jobs/{job_id}")
-@limiter.limit("20/minute")
-async def delete_job(request: Request, job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_required_user)):
-    """Remove a job from tracking (cache and database)"""
-    # Remove from cache
-    if job_id in _job_progress:
-        del _job_progress[job_id]
+# NOTE: Static routes must come BEFORE dynamic routes like /jobs/{job_id}
+@router.get("/jobs/stats")
+@limiter.limit("30/minute")
+async def get_job_stats(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_required_user)):
+    """Get job statistics"""
+    from sqlalchemy import func
 
-    # Remove from database
-    job = db.query(Job).filter(Job.id == job_id).first()
-    if job:
-        db.delete(job)
-        db.commit()
-        return {"status": "ok", "message": f"Job {job_id} removed"}
+    total = db.query(func.count(Job.id)).scalar()
+    by_status = db.query(Job.status, func.count(Job.id)).group_by(Job.status).all()
+    by_type = db.query(Job.type, func.count(Job.id)).group_by(Job.type).all()
 
-    raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    failed_retriable = db.query(func.count(Job.id)).filter(
+        Job.status == "failed",
+        Job.retry_count < Job.max_retries
+    ).scalar()
+
+    return {
+        "total_jobs": total,
+        "by_status": {status: count for status, count in by_status},
+        "by_type": {job_type: count for job_type, count in by_type},
+        "failed_retriable": failed_retriable,
+        "in_memory_cache": len(_job_progress)
+    }
 
 
 @router.post("/jobs/test")
@@ -1444,37 +1451,6 @@ async def create_test_job(request: Request, db: Session = Depends(get_db), curre
         "status": "ok",
         "message": "Test job created and completed",
         "job": job.to_dict()
-    }
-
-
-@router.post("/jobs/{job_id}/retry")
-@limiter.limit("10/minute")
-async def retry_job(request: Request, job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_required_user)):
-    """Retry a failed job"""
-    job = db.query(Job).filter(Job.id == job_id).first()
-
-    if not job:
-        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-
-    if job.status != "failed":
-        raise HTTPException(status_code=400, detail=f"Job {job_id} is not in failed state (current: {job.status})")
-
-    if job.retry_count >= job.max_retries:
-        raise HTTPException(status_code=400, detail=f"Job {job_id} has exceeded max retries ({job.max_retries})")
-
-    # Reset for retry
-    job.status = "pending"
-    job.retry_count += 1
-    job.error_message = None
-    db.commit()
-
-    await update_job_progress(job_id, 0, "pending", f"Queued for retry (attempt {job.retry_count})", db, current_user.id)
-
-    return {
-        "status": "ok",
-        "message": f"Job {job_id} queued for retry",
-        "retry_count": job.retry_count,
-        "max_retries": job.max_retries
     }
 
 
@@ -1519,25 +1495,51 @@ async def cleanup_old_jobs(
     }
 
 
-@router.get("/jobs/stats")
-@limiter.limit("30/minute")
-async def get_job_stats(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_required_user)):
-    """Get job statistics"""
-    from sqlalchemy import func
+# Dynamic routes with path parameters must come AFTER static routes
+@router.delete("/jobs/{job_id}")
+@limiter.limit("20/minute")
+async def delete_job(request: Request, job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_required_user)):
+    """Remove a job from tracking (cache and database)"""
+    # Remove from cache
+    if job_id in _job_progress:
+        del _job_progress[job_id]
 
-    total = db.query(func.count(Job.id)).scalar()
-    by_status = db.query(Job.status, func.count(Job.id)).group_by(Job.status).all()
-    by_type = db.query(Job.type, func.count(Job.id)).group_by(Job.type).all()
+    # Remove from database
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if job:
+        db.delete(job)
+        db.commit()
+        return {"status": "ok", "message": f"Job {job_id} removed"}
 
-    failed_retriable = db.query(func.count(Job.id)).filter(
-        Job.status == "failed",
-        Job.retry_count < Job.max_retries
-    ).scalar()
+    raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+
+@router.post("/jobs/{job_id}/retry")
+@limiter.limit("10/minute")
+async def retry_job(request: Request, job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_required_user)):
+    """Retry a failed job"""
+    job = db.query(Job).filter(Job.id == job_id).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    if job.status != "failed":
+        raise HTTPException(status_code=400, detail=f"Job {job_id} is not in failed state (current: {job.status})")
+
+    if job.retry_count >= job.max_retries:
+        raise HTTPException(status_code=400, detail=f"Job {job_id} has exceeded max retries ({job.max_retries})")
+
+    # Reset for retry
+    job.status = "pending"
+    job.retry_count += 1
+    job.error_message = None
+    db.commit()
+
+    await update_job_progress(job_id, 0, "pending", f"Queued for retry (attempt {job.retry_count})", db, current_user.id)
 
     return {
-        "total_jobs": total,
-        "by_status": {status: count for status, count in by_status},
-        "by_type": {job_type: count for job_type, count in by_type},
-        "failed_retriable": failed_retriable,
-        "in_memory_cache": len(_job_progress)
+        "status": "ok",
+        "message": f"Job {job_id} queued for retry",
+        "retry_count": job.retry_count,
+        "max_retries": job.max_retries
     }
