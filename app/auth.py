@@ -52,7 +52,7 @@ def create_refresh_token(data: dict) -> str:
 
 def create_tokens(user_id: int) -> Tuple[str, str]:
     """Create both access and refresh tokens for a user."""
-    data = {"sub": user_id}
+    data = {"sub": str(user_id)}  # JWT sub claim must be a string
     access_token = create_access_token(data)
     refresh_token = create_refresh_token(data)
     return access_token, refresh_token
@@ -82,8 +82,13 @@ def get_current_user(
     if not payload:
         return None
 
-    user_id: int = payload.get("sub")
-    if user_id is None:
+    user_id_str = payload.get("sub")
+    if user_id_str is None:
+        return None
+
+    try:
+        user_id = int(user_id_str)
+    except (ValueError, TypeError):
         return None
 
     user = db.query(User).filter(User.id == user_id).first()
@@ -109,8 +114,13 @@ def refresh_access_token(refresh_token: str, db: Session) -> Optional[Tuple[str,
     if not payload:
         return None
 
-    user_id = payload.get("sub")
-    if not user_id:
+    user_id_str = payload.get("sub")
+    if not user_id_str:
+        return None
+
+    try:
+        user_id = int(user_id_str)
+    except (ValueError, TypeError):
         return None
 
     # Verify user still exists and is active
