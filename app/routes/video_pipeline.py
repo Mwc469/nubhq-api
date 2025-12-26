@@ -161,12 +161,25 @@ async def pipeline_health():
 
 @router.get("/templates", response_model=List[TemplateInfo])
 async def list_templates():
-    """List available compilation templates"""
-    if not HAS_WORKERS:
-        raise HTTPException(status_code=503, detail="Worker modules not available")
+    """List available compilation templates (built-in + custom)"""
+    templates = []
 
-    compiler = TemplateCompiler()
-    return compiler.list_templates()
+    # Add built-in templates from compiler
+    if HAS_WORKERS:
+        compiler = TemplateCompiler()
+        templates.extend(compiler.list_templates())
+
+    # Add custom templates
+    for t in _custom_templates.values():
+        templates.append(TemplateInfo(
+            id=t["id"],
+            name=t["name"],
+            duration=t["duration"],
+            aspect=t["aspect"],
+            segments=len(t.get("segments", []))
+        ))
+
+    return templates
 
 
 @router.post("/highlight", response_model=HighlightResponse)
