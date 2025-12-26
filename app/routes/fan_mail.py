@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
+from datetime import datetime
 
 from ..database import get_db
 from ..models.fan_message import FanMessage
-from ..schemas.fan_message import FanMessageCreate, FanMessageResponse
+from ..schemas.fan_message import FanMessageCreate, FanMessageResponse, FanMessageReply
 
 router = APIRouter(prefix="/api/fan-mail", tags=["fan-mail"])
 
@@ -50,3 +51,17 @@ def mark_as_read(message_id: int, db: Session = Depends(get_db)):
 def get_unread_count(db: Session = Depends(get_db)):
     count = db.query(FanMessage).filter(FanMessage.is_read == False).count()
     return {"count": count}
+
+
+@router.post("/{message_id}/reply", response_model=FanMessageResponse)
+def reply_to_message(message_id: int, reply_data: FanMessageReply, db: Session = Depends(get_db)):
+    message = db.query(FanMessage).filter(FanMessage.id == message_id).first()
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    message.reply = reply_data.reply
+    message.replied_at = datetime.utcnow()
+    message.is_read = True
+    db.commit()
+    db.refresh(message)
+    return message

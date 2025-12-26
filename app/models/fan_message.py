@@ -11,4 +11,6 @@ class FanMessage(Base):
     sender_name = Column(String(100), nullable=False)
     content = Column(Text, nullable=False)
     is_read = Column(Boolean, default=False)
+    reply = Column(Text, nullable=True)
+    replied_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
